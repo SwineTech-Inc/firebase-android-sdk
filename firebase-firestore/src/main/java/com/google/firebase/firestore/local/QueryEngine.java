@@ -14,6 +14,7 @@
 
 package com.google.firebase.firestore.local;
 
+import static com.google.firebase.firestore.util.Assert.fail;
 import static com.google.firebase.firestore.util.Assert.hardAssert;
 
 import com.google.firebase.database.collection.ImmutableSortedMap;
@@ -97,6 +98,22 @@ public class QueryEngine {
     result = executeFullCollectionScan(query, counter);
     if (result != null && automaticIndexingEnabled) {
       CreateCacheIndices(query, counter, result.size());
+    }
+    return result;
+  }
+
+  public ImmutableSortedMap<DocumentKey, Document> getDocumentsMatchingQueryTest(
+      Query query, boolean autoIndexing, QueryContext counter) {
+    hardAssert(initialized, "initialize() not called");
+
+    ImmutableSortedMap<DocumentKey, Document> result;
+    if (autoIndexing) {
+      result = performQueryUsingIndex(query);
+      if (result == null) {
+        fail("createTargetIndices fails");
+      }
+    } else {
+      result = executeFullCollectionScan(query, counter);
     }
     return result;
   }
