@@ -403,6 +403,8 @@ public class FirebaseFirestore {
     return client.configureFieldIndexes(parsedIndexes);
   }
 
+  // TODO(csi): Remove the `hide` and scope annotations.
+  /** @hide */
   @RestrictTo(RestrictTo.Scope.LIBRARY)
   @Nullable
   public PersistentCacheManager getPersistentCacheIndexManager() {
