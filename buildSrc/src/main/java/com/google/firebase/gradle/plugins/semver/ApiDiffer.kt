@@ -40,9 +40,6 @@ abstract class ApiDiffer : DefaultTask() {
 
   @TaskAction
   fun run() {
-    if (version.get().contains("beta") || previousVersionString.get().isNullOrEmpty()) {
-      return
-    }
     val (pMajor, pMinor, _) = previousVersionString.get().split(".")
     val (major, minor, _) = version.get().split(".")
     val curVersionDelta: VersionDelta =

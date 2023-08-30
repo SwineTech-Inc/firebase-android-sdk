@@ -15,7 +15,6 @@
 package com.google.firebase.perf;
 
 import com.google.firebase.perf.application.AppStateMonitor;
-import com.google.firebase.perf.logging.AndroidLogger;
 
 /**
  * FirebasePerformanceInitializer to initialize FirebasePerformance during app cold start
@@ -23,18 +22,10 @@ import com.google.firebase.perf.logging.AndroidLogger;
  * @hide
  */
 public final class FirebasePerformanceInitializer implements AppStateMonitor.AppColdStartCallback {
-  private static final AndroidLogger logger = AndroidLogger.getInstance();
 
   @Override
   public void onAppColdStart() {
     // Initialize FirebasePerformance when app cold starts.
-    try {
-      FirebasePerformance.getInstance();
-    } catch (IllegalStateException ex) {
-      logger.warn(
-          "FirebaseApp is not initialized. Firebase Performance will not be collecting any "
-              + "performance metrics until initialized. %s",
-          ex);
-    }
+    FirebasePerformance.getInstance();
   }
 }

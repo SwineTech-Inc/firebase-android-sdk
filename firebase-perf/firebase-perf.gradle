@@ -42,7 +42,6 @@ protobuf {
 }
 
 android {
-    namespace "com.google.firebase.perf"
     compileSdk 30
 
     lintOptions {
@@ -127,6 +126,6 @@ dependencies {
     testImplementation "org.robolectric:robolectric:$robolectricVersion"
     testImplementation "com.google.truth:truth:$googleTruthVersion"
     testImplementation group: 'org.apache.httpcomponents', name: 'httpclient', version: '4.5.6'
-    testImplementation "androidx.test:core:$androidxTestCoreVersion"
+    testImplementation 'androidx.test:core:1.2.0'
     testImplementation 'androidx.test:rules:1.2.0'
 }

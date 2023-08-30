@@ -24,7 +24,6 @@ firebaseLibrary {
 }
 
 android {
-    namespace "com.google.firebase.inappmessaging.ktx"    
     compileSdkVersion project.targetSdkVersion
     defaultConfig {
         minSdkVersion 16
@@ -55,5 +54,5 @@ dependencies {
     testImplementation "org.robolectric:robolectric:$robolectricVersion"
     testImplementation 'junit:junit:4.12'
     testImplementation "com.google.truth:truth:$googleTruthVersion"
-    testImplementation "androidx.test:core:$androidxTestCoreVersion"
+    testImplementation 'androidx.test:core:1.2.0'
 }

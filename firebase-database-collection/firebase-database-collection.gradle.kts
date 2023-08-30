@@ -25,7 +25,6 @@ android {
 
   compileSdk = targetSdkVersion
 
-  namespace = "com.google.firebase.database.collection"
   defaultConfig {
     minSdk = minSdkVersion
     targetSdk = targetSdkVersion

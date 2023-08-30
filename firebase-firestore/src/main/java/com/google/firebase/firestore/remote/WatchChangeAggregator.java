@@ -85,7 +85,7 @@ public class WatchChangeAggregator {
   private static final String LOG_TAG = "WatchChangeAggregator";
 
   /** The bloom filter application status while handling existence filter mismatch. */
-  enum BloomFilterApplicationStatus {
+  private enum BloomFilterApplicationStatus {
     SUCCESS,
     SKIPPED,
     FALSE_POSITIVE
@@ -216,11 +216,7 @@ public class WatchChangeAggregator {
         if (currentSize != expectedCount) {
 
           // Apply bloom filter to identify and mark removed documents.
-          BloomFilter bloomFilter = this.parseBloomFilter(watchChange);
-          BloomFilterApplicationStatus status =
-              bloomFilter != null
-                  ? this.applyBloomFilter(bloomFilter, watchChange, currentSize)
-                  : BloomFilterApplicationStatus.SKIPPED;
+          BloomFilterApplicationStatus status = this.applyBloomFilter(watchChange, currentSize);
 
           if (status != BloomFilterApplicationStatus.SUCCESS) {
             // If bloom filter application fails, we reset the mapping and
@@ -238,27 +234,28 @@ public class WatchChangeAggregator {
           TestingHooks.getInstance()
               .notifyOnExistenceFilterMismatch(
                   TestingHooks.ExistenceFilterMismatchInfo.from(
+                      status == BloomFilterApplicationStatus.SUCCESS,
                       currentSize,
-                      watchChange.getExistenceFilter(),
-                      targetMetadataProvider.getDatabaseId(),
-                      bloomFilter,
-                      status));
+                      watchChange.getExistenceFilter()));
         }
       }
     }
   }
 
-  /** Parse the bloom filter from the "unchanged_names" field of an existence filter. */
-  @Nullable
-  private BloomFilter parseBloomFilter(ExistenceFilterWatchChange watchChange) {
+  /** Apply bloom filter to remove the deleted documents, and return the application status. */
+  private BloomFilterApplicationStatus applyBloomFilter(
+      ExistenceFilterWatchChange watchChange, int currentCount) {
+    int expectedCount = watchChange.getExistenceFilter().getCount();
     com.google.firestore.v1.BloomFilter unchangedNames =
         watchChange.getExistenceFilter().getUnchangedNames();
+
     if (unchangedNames == null || !unchangedNames.hasBits()) {
-      return null;
+      return BloomFilterApplicationStatus.SKIPPED;
     }
 
     ByteString bitmap = unchangedNames.getBits().getBitmap();
     BloomFilter bloomFilter;
+
     try {
       bloomFilter =
           BloomFilter.create(
@@ -269,26 +266,20 @@ public class WatchChangeAggregator {
           "Applying bloom filter failed: ("
               + e.getMessage()
               + "); ignoring the bloom filter and falling back to full re-query.");
-      return null;
+      return BloomFilterApplicationStatus.SKIPPED;
     }
 
     if (bloomFilter.getBitCount() == 0) {
-      return null;
+      return BloomFilterApplicationStatus.SKIPPED;
     }
-
-    return bloomFilter;
-  }
-
-  /** Apply bloom filter to remove the deleted documents, and return the application status. */
-  private BloomFilterApplicationStatus applyBloomFilter(
-      BloomFilter bloomFilter, ExistenceFilterWatchChange watchChange, int currentCount) {
-    int expectedCount = watchChange.getExistenceFilter().getCount();
 
     int removedDocumentCount = this.filterRemovedDocuments(bloomFilter, watchChange.getTargetId());
 
-    return (expectedCount == (currentCount - removedDocumentCount))
-        ? BloomFilterApplicationStatus.SUCCESS
-        : BloomFilterApplicationStatus.FALSE_POSITIVE;
+    if (expectedCount != (currentCount - removedDocumentCount)) {
+      return BloomFilterApplicationStatus.FALSE_POSITIVE;
+    }
+
+    return BloomFilterApplicationStatus.SUCCESS;
   }
 
   /**

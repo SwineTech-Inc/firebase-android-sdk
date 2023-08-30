@@ -43,8 +43,8 @@ internal object TestSessionEventData {
 
   val TEST_DATA_COLLECTION_STATUS =
     DataCollectionStatus(
-      performance = DataCollectionState.COLLECTION_SDK_NOT_INSTALLED,
-      crashlytics = DataCollectionState.COLLECTION_SDK_NOT_INSTALLED,
+      performance = DataCollectionState.COLLECTION_ENABLED,
+      crashlytics = DataCollectionState.COLLECTION_ENABLED,
       sessionSamplingRate = 1.0
     )
 

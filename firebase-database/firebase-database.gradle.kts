@@ -27,7 +27,6 @@ android {
   installation.timeOutInMs = 60 * 1000
   compileSdk = targetSdkVersion
 
-  namespace = "com.google.firebase.database"
   defaultConfig {
     minSdk = minSdkVersion
     targetSdk = targetSdkVersion

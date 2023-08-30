@@ -1,8 +1,5 @@
 ## Build Source
 
-> [!NOTE]
-> Eventually, this will be merged with our [contributor documentation](https://firebase.github.io/firebase-android-sdk/).
-
 This file will be more organized as time progresses. Because a lot of our
 plugins and systems require a moderate amount of cognitive overhead to understand,
 I thought it best to provide documentation for such systems. You can find the

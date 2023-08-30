@@ -28,7 +28,6 @@ android {
   val targetSdkVersion : Int by rootProject
   val minSdkVersion : Int by rootProject
   compileSdk = targetSdkVersion
-  namespace = "com.google.firebase.dynamicloading"
   defaultConfig {
     minSdk = minSdkVersion
     targetSdk = targetSdkVersion

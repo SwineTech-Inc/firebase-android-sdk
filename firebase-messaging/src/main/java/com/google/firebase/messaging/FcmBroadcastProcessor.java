@@ -87,7 +87,7 @@ public class FcmBroadcastProcessor {
     boolean isHighPriority = (intent.getFlags() & Intent.FLAG_RECEIVER_FOREGROUND) != 0;
 
     if (subjectToBackgroundCheck && !isHighPriority) {
-      return bindToMessagingService(context, intent, isHighPriority);
+      return bindToMessagingService(context, intent);
     }
 
     // If app isn't subject to background check or if message is high priority, use startService
@@ -106,7 +106,7 @@ public class FcmBroadcastProcessor {
           // On O, if we're not able to start the service fall back to binding. This could happen if
           // the app isn't targeting O, but the user manually applied restrictions, or if the temp
           // whitelist has already expired.
-          return bindToMessagingService(context, intent, isHighPriority)
+          return bindToMessagingService(context, intent)
               .continueWith(
                   // ok to use direct executor because we're just immediately returning an int
                   Runnable::run,
@@ -114,32 +114,20 @@ public class FcmBroadcastProcessor {
         });
   }
 
-  private static Task<Integer> bindToMessagingService(
-      Context context, Intent intent, boolean isForegroundBroadcast) {
+  private static Task<Integer> bindToMessagingService(Context context, Intent intent) {
     if (Log.isLoggable(TAG, Log.DEBUG)) {
       Log.d(TAG, "Binding to service");
     }
-
-    WithinAppServiceConnection connection =
-        getServiceConnection(context, ServiceStarter.ACTION_MESSAGING_EVENT);
-
-    if (isForegroundBroadcast) {
-      // Foreground broadcast queue, finish the broadcast immediately
-      // (by returning a completed Task) to avoid ANRs.
-      if (ServiceStarter.getInstance().hasWakeLockPermission(context)) {
-        WakeLockHolder.sendWakefulServiceIntent(context, connection, intent);
-      } else {
-        connection.sendIntent(intent);
-      }
-      return Tasks.forResult(ServiceStarter.SUCCESS);
+    if (ServiceStarter.getInstance().hasWakeLockPermission(context)) {
+      WakeLockHolder.sendWakefulServiceIntent(
+          context, getServiceConnection(context, ServiceStarter.ACTION_MESSAGING_EVENT), intent);
     } else {
-      // Background broadcast queue, finish the broadcast after the message has been handled
-      // (which times out after 20 seconds to avoid ANRs and to limit how long the app is active).
-      return connection
-          .sendIntent(intent)
-          // ok to use direct executor because we're just immediately returning an int
-          .continueWith(Runnable::run, t -> ServiceStarter.SUCCESS);
+      // Ignore result since we're no longer blocking on the service handling the intent.
+      Task<Void> unused =
+          getServiceConnection(context, ServiceStarter.ACTION_MESSAGING_EVENT).sendIntent(intent);
     }
+
+    return Tasks.forResult(ServiceStarter.SUCCESS);
   }
 
   /** Connect to a service via bind. This is used to process intents in Android O+ */
@@ -161,18 +149,6 @@ public class FcmBroadcastProcessor {
   public static void reset() {
     synchronized (lock) {
       fcmServiceConn = null;
-    }
-  }
-
-  /**
-   * Sets WithinAppServiceConnection for testing.
-   *
-   * @hide
-   */
-  @VisibleForTesting
-  public static void setServiceConnection(WithinAppServiceConnection connection) {
-    synchronized (lock) {
-      fcmServiceConn = connection;
     }
   }
 }

@@ -40,16 +40,14 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 import org.eclipse.aether.resolution.VersionRangeResolutionException;
 import org.gradle.api.DefaultTask;
-import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.logging.Logger;
-import org.gradle.api.tasks.OutputDirectory;
 import org.gradle.api.tasks.TaskAction;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
 
-public abstract class BomGeneratorTask extends DefaultTask {
+public class BomGeneratorTask extends DefaultTask {
   private static final List<String> BOM_ARTIFACTS =
       ImmutableList.of(
           "com.google.firebase:firebase-analytics",
@@ -149,7 +147,6 @@ public abstract class BomGeneratorTask extends DefaultTask {
           "firebase-ml-model-interpreter",
           "firebase-perf-license",
           "firebase-plugins",
-          "firebase-sessions",
           "firebase-storage-common",
           "firebase-storage-common-license",
           "firebase-storage-license",
@@ -185,9 +182,6 @@ public abstract class BomGeneratorTask extends DefaultTask {
   private Set<String> allFirebaseArtifacts;
 
   public Map<String, String> versionOverrides = new HashMap<>();
-
-  @OutputDirectory
-  public abstract DirectoryProperty getBomDirectory();
 
   /**
    * This task generates a current Bill of Materials (BoM) based on the latest versions of
@@ -250,8 +244,8 @@ public abstract class BomGeneratorTask extends DefaultTask {
     String version = findArtifactVersion(bomDependencies, currentVersion, previousBomVersions);
 
     // Surface generated pom for sanity checking and testing, and then write it.
-    Path bomDir = getBomDirectory().getAsFile().get().toPath();
-    PomXmlWriter xmlWriter = new PomXmlWriter(bomDependencies, version, bomDir);
+    Path projectRootDir = this.getProject().getRootDir().toPath();
+    PomXmlWriter xmlWriter = new PomXmlWriter(bomDependencies, version, projectRootDir);
     MarkdownDocumentationWriter documentationWriter =
         new MarkdownDocumentationWriter(
             bomDependencies, version, previousBomVersions, currentVersion);

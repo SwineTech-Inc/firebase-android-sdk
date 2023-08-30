@@ -13,7 +13,8 @@
 <!-- See the License for the specific language governing permissions and -->
 <!-- limitations under the License. -->
 
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  package="com.google.firebase.ml_data_collection_tests">
 
 <application>
     <meta-data android:name="firebase_model_downloader_collection_enabled"
@@ -26,3 +27,4 @@
     </service>
   </application>
 </manifest>
+

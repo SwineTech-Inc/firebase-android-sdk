@@ -27,7 +27,6 @@ firebaseLibrary {
 android {
   val targetSdkVersion : Int by rootProject
 
-  namespace = "com.google.firebase.functions.ktx"
   compileSdk = targetSdkVersion
   defaultConfig {
     minSdk = 16

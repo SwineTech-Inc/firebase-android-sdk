@@ -21,7 +21,6 @@ android {
         timeOutInMs 60 * 1000
     }
 
-    namespace "com.google.firebase.ml_data_collection_tests"
     compileSdkVersion project.targetSdkVersion
     defaultConfig {
         minSdkVersion 16
@@ -45,7 +44,7 @@ dependencies {
     implementation 'com.google.firebase:firebase-common:20.3.1'
     implementation project(':firebase-ml-modeldownloader')
     testImplementation 'androidx.test:runner:1.2.0'
-    testImplementation "androidx.test.ext:junit:$androidxTestJUnitVersion"
+    testImplementation 'androidx.test.ext:junit:1.1.1'
     testImplementation "org.robolectric:robolectric:$robolectricVersion"
     testImplementation 'junit:junit:4.12'
     testImplementation "com.google.truth:truth:$googleTruthVersion"

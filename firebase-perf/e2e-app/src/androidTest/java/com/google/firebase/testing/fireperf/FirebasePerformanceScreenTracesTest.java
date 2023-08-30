@@ -40,7 +40,7 @@ public class FirebasePerformanceScreenTracesTest {
       new ActivityScenarioRule<>(FirebasePerfScreenTracesActivity.class);
 
   @Test
-  public void scrollRecyclerViewToEnd() throws Exception {
+  public void scrollRecyclerViewToEnd() {
     ActivityScenario scenario = activityRule.getScenario();
     int itemCount = FirebasePerfScreenTracesActivity.NUM_LIST_ITEMS;
     int currItemCount = 0;
@@ -51,7 +51,5 @@ public class FirebasePerformanceScreenTracesTest {
     }
     // End Activity screen trace by switching to another Activity
     scenario.launch(FirebasePerfScreenTracesActivity.class);
-    // Default wait between flushes is 30s.
-    Thread.sleep(40 * 1000);
   }
 }

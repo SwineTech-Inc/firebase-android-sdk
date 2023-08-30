@@ -20,7 +20,6 @@ import android.os.Build
 import com.google.firebase.FirebaseApp
 import com.google.firebase.encoders.DataEncoder
 import com.google.firebase.encoders.json.JsonDataEncoderBuilder
-import com.google.firebase.sessions.api.SessionSubscriber
 import com.google.firebase.sessions.settings.SessionsSettings
 
 /** Contains functions for [SessionEvent]s. */
@@ -41,7 +40,6 @@ internal object SessionEvents {
     firebaseApp: FirebaseApp,
     sessionDetails: SessionDetails,
     sessionsSettings: SessionsSettings,
-    subscribers: Map<SessionSubscriber.Name, SessionSubscriber> = emptyMap(),
   ) =
     SessionEvent(
       eventType = EventType.SESSION_START,
@@ -51,11 +49,7 @@ internal object SessionEvents {
           sessionDetails.firstSessionId,
           sessionDetails.sessionIndex,
           eventTimestampUs = sessionDetails.sessionStartTimestampUs,
-          DataCollectionStatus(
-            performance = toDataCollectionState(subscribers[SessionSubscriber.Name.PERFORMANCE]),
-            crashlytics = toDataCollectionState(subscribers[SessionSubscriber.Name.CRASHLYTICS]),
-            sessionSamplingRate = sessionsSettings.samplingRate,
-          ),
+          DataCollectionStatus(sessionSamplingRate = sessionsSettings.samplingRate),
         ),
       applicationInfo = getApplicationInfo(firebaseApp)
     )
@@ -63,7 +57,6 @@ internal object SessionEvents {
   fun getApplicationInfo(firebaseApp: FirebaseApp): ApplicationInfo {
     val context = firebaseApp.applicationContext
     val packageName = context.packageName
-    @Suppress("DEPRECATION") // TODO(mrober): Use ApplicationInfoFlags when target sdk set to 33
     val packageInfo = context.packageManager.getPackageInfo(packageName, 0)
     val buildVersion =
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -81,19 +74,10 @@ internal object SessionEvents {
       androidAppInfo =
         AndroidApplicationInfo(
           packageName = packageName,
-          versionName = packageInfo.versionName ?: buildVersion,
+          versionName = packageInfo.versionName,
           appBuildVersion = buildVersion,
           deviceManufacturer = Build.MANUFACTURER,
         )
     )
   }
-
-  private fun toDataCollectionState(subscriber: SessionSubscriber?): DataCollectionState =
-    if (subscriber == null) {
-      DataCollectionState.COLLECTION_SDK_NOT_INSTALLED
-    } else if (subscriber.isDataCollectionEnabled) {
-      DataCollectionState.COLLECTION_ENABLED
-    } else {
-      DataCollectionState.COLLECTION_DISABLED
-    }
 }

@@ -16,6 +16,7 @@ package com.google.firebase.firestore.remote;
 
 import android.util.Base64;
 import androidx.annotation.NonNull;
+import androidx.annotation.VisibleForTesting;
 import com.google.protobuf.ByteString;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -92,6 +93,7 @@ public final class BloomFilter {
     }
   }
 
+  @VisibleForTesting
   int getBitCount() {
     return this.bitCount;
   }

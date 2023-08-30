@@ -30,7 +30,6 @@ import com.google.firebase.components.ComponentContainer;
 import com.google.firebase.components.ComponentRegistrar;
 import com.google.firebase.components.Dependency;
 import com.google.firebase.components.Qualified;
-import com.google.firebase.datatransport.LegacyTransportBackend;
 import com.google.firebase.events.Subscriber;
 import com.google.firebase.inappmessaging.internal.AbtIntegrationHelper;
 import com.google.firebase.inappmessaging.internal.ProgramaticContextualTriggers;
@@ -67,9 +66,6 @@ public class FirebaseInAppMessagingRegistrar implements ComponentRegistrar {
   private Qualified<Executor> lightWeightExecutor =
       Qualified.qualified(Lightweight.class, Executor.class);
 
-  private Qualified<TransportFactory> legacyTransportFactory =
-      Qualified.qualified(LegacyTransportBackend.class, TransportFactory.class);
-
   @Override
   @Keep
   public List<Component<?>> getComponents() {
@@ -81,7 +77,7 @@ public class FirebaseInAppMessagingRegistrar implements ComponentRegistrar {
             .add(Dependency.required(FirebaseApp.class))
             .add(Dependency.required(AbtComponent.class))
             .add(Dependency.deferred(AnalyticsConnector.class))
-            .add(Dependency.required(legacyTransportFactory))
+            .add(Dependency.required(TransportFactory.class))
             .add(Dependency.required(Subscriber.class))
             .add(Dependency.required(backgroundExecutor))
             .add(Dependency.required(blockingExecutor))
@@ -129,7 +125,7 @@ public class FirebaseInAppMessagingRegistrar implements ComponentRegistrar {
                 new ApiClientModule(firebaseApp, firebaseInstallations, universalComponent.clock()))
             .grpcClientModule(new GrpcClientModule(firebaseApp))
             .universalComponent(universalComponent)
-            .transportFactory(container.get(legacyTransportFactory))
+            .transportFactory(container.get(TransportFactory.class))
             .build();
 
     return instance.providesFirebaseInAppMessaging();

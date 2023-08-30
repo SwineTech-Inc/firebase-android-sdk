@@ -23,7 +23,6 @@ import android.content.Context;
 import androidx.annotation.Keep;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.annotation.RestrictTo;
 import androidx.annotation.VisibleForTesting;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.TaskCompletionSource;
@@ -105,8 +104,6 @@ public class FirebaseFirestore {
   private volatile FirestoreClient client;
   private final GrpcMetadataProvider metadataProvider;
 
-  @Nullable private PersistentCacheIndexManager persistentCacheIndexManager;
-
   @NonNull
   private static FirebaseApp getDefaultFirebaseApp() {
     FirebaseApp app = FirebaseApp.getInstance();
@@ -117,10 +114,9 @@ public class FirebaseFirestore {
   }
 
   /**
-   * Returns the default {@link FirebaseFirestore} instance for the default {@link FirebaseApp}.
-   *
-   * <p>Returns the same instance for all invocations. If no instance exists, initializes a new
-   * instance.
+   * Returns the default {@link FirebaseFirestore} instance associated with the default {@link
+   * FirebaseApp}. Returns the same instance for all invocations. If no instance exists, initializes
+   * a new instance with default settings.
    *
    * @returns The {@link FirebaseFirestore} instance.
    */
@@ -130,12 +126,11 @@ public class FirebaseFirestore {
   }
 
   /**
-   * Returns the default {@link FirebaseFirestore} instance for the provided {@link FirebaseApp}.
+   * Returns the default {@link FirebaseFirestore} instance that is associated with the provided
+   * {@link FirebaseApp}. For a given {@link FirebaseApp}, invocation always returns the same
+   * instance. If no instance exists, initializes a new instance with default settings.
    *
-   * <p>For a given {@link FirebaseApp}, invocation always returns the same instance. If no instance
-   * exists, initializes a new instance.
-   *
-   * @param app The {@link FirebaseApp} instance that the returned {@link FirebaseFirestore}
+   * @param app - The {@link FirebaseApp} instance that the returned {@link FirebaseFirestore}
    *     instance is associated with.
    * @returns The {@link FirebaseFirestore} instance.
    */
@@ -145,12 +140,11 @@ public class FirebaseFirestore {
   }
 
   /**
-   * Returns the {@link FirebaseFirestore} instance for the default {@link FirebaseApp}.
+   * Returns the {@link FirebaseFirestore} instance that is associated with the default {@link
+   * FirebaseApp}. Returns the same instance for all invocations given the same database parameter.
+   * If no instance exists, initializes a new instance with default settings.
    *
-   * <p>Returns the same instance for all invocations given the same database parameter. If no
-   * instance exists, initializes a new instance.
-   *
-   * @param database The database ID.
+   * @param database - The name of database.
    * @returns The {@link FirebaseFirestore} instance.
    */
   @NonNull
@@ -159,14 +153,14 @@ public class FirebaseFirestore {
   }
 
   /**
-   * Returns the {@link FirebaseFirestore} instance for the provided {@link FirebaseApp}.
+   * Returns the {@link FirebaseFirestore} instance that is associated with the provided {@link
+   * FirebaseApp}. Returns the same instance for all invocations given the same {@link FirebaseApp}
+   * and database parameter. If no instance exists, initializes a new instance with default
+   * settings.
    *
-   * <p>Returns the same instance for all invocations given the same {@link FirebaseApp} and
-   * database parameter. If no instance exists, initializes a new instance.
-   *
-   * @param app The {@link FirebaseApp} instance that the returned {@link FirebaseFirestore}
+   * @param app - The {@link FirebaseApp} instance that the returned {@link FirebaseFirestore}
    *     instance is associated with.
-   * @param database The database ID.
+   * @param database - The name of database.
    * @returns The {@link FirebaseFirestore} instance.
    */
   @NonNull
@@ -404,26 +398,6 @@ public class FirebaseFirestore {
     }
 
     return client.configureFieldIndexes(parsedIndexes);
-  }
-
-  /**
-   * Returns the PersistentCache Index Manager used by this {@code FirebaseFirestore} object.
-   *
-   * @return The {@code PersistentCacheIndexManager} instance or null if local persistent storage is
-   *     not in use.
-   */
-  // TODO(csi): Remove the `hide` and scope annotations.
-  /** @hide */
-  @RestrictTo(RestrictTo.Scope.LIBRARY)
-  @Nullable
-  public synchronized PersistentCacheIndexManager getPersistentCacheIndexManager() {
-    ensureClientConfigured();
-    if (persistentCacheIndexManager == null
-        && (settings.isPersistenceEnabled()
-            || settings.getCacheSettings() instanceof PersistentCacheSettings)) {
-      persistentCacheIndexManager = new PersistentCacheIndexManager(client);
-    }
-    return persistentCacheIndexManager;
   }
 
   /**

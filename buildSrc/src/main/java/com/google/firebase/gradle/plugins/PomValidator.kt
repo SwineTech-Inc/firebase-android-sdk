@@ -43,15 +43,10 @@ abstract class PomValidator : DefaultTask() {
 
   @TaskAction
   fun run() {
-    try {
-      var diff = diffWithPomFromURL(getLatestReleasePomUrl())
+    var diff = diffWithPomFromURL(getLatestReleasePomUrl())
 
-      if (diff.isNotEmpty()) {
-        throw GradleException("Dependency version errors found:\n${diff}")
-      }
-    } catch (_: java.io.FileNotFoundException) {
-      // Gmaven artifact doesn't exist.
-      return
+    if (diff.isNotEmpty()) {
+      throw GradleException("Dependency version errors found:\n${diff}")
     }
   }
 
@@ -99,7 +94,6 @@ abstract class PomValidator : DefaultTask() {
       listOf(
         "javax.inject", // javax.inject doesn't respect SemVer and doesn't update
         "dagger", // dagger doesn't respect Semver
-        "auto-service-annotations", // auto-service-annotations doesn't respect SemVer
       )
   }
 }

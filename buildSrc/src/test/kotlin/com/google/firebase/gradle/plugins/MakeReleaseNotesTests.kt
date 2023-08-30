@@ -31,7 +31,7 @@ class MakeReleaseNotesTests : FunSpec() {
   fun `Creates release notes that match the expected output`() {
     buildReleaseNotes()
 
-    val expectedReleaseNoteFile = testResources.childFile("release-notes.md")
+    val expectedReleaseNoteFile = resourcesDirectory.childFile("output/release-notes.md")
     val releaseNoteFile =
       testProjectDirectory.root.childFile(
         "firebase-storage/build/tmp/makeReleaseNotes/release_notes.md"
@@ -51,9 +51,7 @@ class MakeReleaseNotesTests : FunSpec() {
 
   companion object {
     @ClassRule @JvmField val testProjectDirectory = TemporaryFolder()
-    private val resourcesDirectory = File("src/test/resources")
-    private val basicProject = resourcesDirectory.childFile("BasicProject")
-    private val testResources = resourcesDirectory.childFile("MakeReleaseNotes")
+    private val resourcesDirectory = File("src/test/resources/MakeReleaseNotes")
 
     @BeforeClass
     @JvmStatic
@@ -62,7 +60,7 @@ class MakeReleaseNotesTests : FunSpec() {
     }
 
     private fun copyFixtureToTempDirectory() {
-      basicProject.copyRecursively(testProjectDirectory.root)
+      File("$resourcesDirectory/project").copyRecursively(testProjectDirectory.root)
     }
   }
 }

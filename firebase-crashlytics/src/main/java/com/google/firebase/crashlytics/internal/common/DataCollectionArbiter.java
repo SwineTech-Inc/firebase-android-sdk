@@ -75,22 +75,9 @@ public class DataCollectionArbiter {
     final boolean dataCollectionEnabled =
         crashlyticsDataCollectionEnabled != null
             ? crashlyticsDataCollectionEnabled
-            : isFirebaseDataCollectionDefaultEnabled();
+            : firebaseApp.isDataCollectionDefaultEnabled();
     logDataCollectionState(dataCollectionEnabled);
     return dataCollectionEnabled;
-  }
-
-  /**
-   * Determine whether automatic data collection is enabled or disabled by default in all SDKs.
-   *
-   * <p>If the FirebaseApp has been deleted, returns false.
-   */
-  private boolean isFirebaseDataCollectionDefaultEnabled() {
-    try {
-      return firebaseApp.isDataCollectionDefaultEnabled();
-    } catch (IllegalStateException ignored) {
-      return false;
-    }
   }
 
   public synchronized void setCrashlyticsDataCollectionEnabled(@Nullable Boolean enabled) {

@@ -22,8 +22,6 @@ import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import com.google.auto.value.AutoValue;
 import com.google.firebase.firestore.ListenerRegistration;
-import com.google.firebase.firestore.model.DatabaseId;
-import com.google.firebase.firestore.remote.WatchChangeAggregator.BloomFilterApplicationStatus;
 import com.google.firestore.v1.BloomFilter;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
@@ -130,11 +128,9 @@ final class TestingHooks {
     static ExistenceFilterMismatchInfo create(
         int localCacheCount,
         int existenceFilterCount,
-        String projectId,
-        String databaseId,
         @Nullable ExistenceFilterBloomFilterInfo bloomFilter) {
       return new AutoValue_TestingHooks_ExistenceFilterMismatchInfo(
-          localCacheCount, existenceFilterCount, projectId, databaseId, bloomFilter);
+          localCacheCount, existenceFilterCount, bloomFilter);
     }
 
     /** Returns the number of documents that matched the query in the local cache. */
@@ -145,12 +141,6 @@ final class TestingHooks {
      * ExistenceFilter message's `count` field.
      */
     abstract int existenceFilterCount();
-
-    /** The projectId used when checking documents for membership in the bloom filter. */
-    abstract String projectId();
-
-    /** The databaseId used when checking documents for membership in the bloom filter. */
-    abstract String databaseId();
 
     /**
      * Returns information about the bloom filter provided by Watch in the ExistenceFilter message's
@@ -165,17 +155,11 @@ final class TestingHooks {
      * with the values taken from the given arguments.
      */
     static ExistenceFilterMismatchInfo from(
-        int localCacheCount,
-        ExistenceFilter existenceFilter,
-        DatabaseId databaseId,
-        @Nullable com.google.firebase.firestore.remote.BloomFilter bloomFilter,
-        BloomFilterApplicationStatus bloomFilterStatus) {
+        boolean bloomFilterApplied, int localCacheCount, ExistenceFilter existenceFilter) {
       return create(
           localCacheCount,
           existenceFilter.getCount(),
-          databaseId.getProjectId(),
-          databaseId.getDatabaseId(),
-          ExistenceFilterBloomFilterInfo.from(bloomFilter, bloomFilterStatus, existenceFilter));
+          ExistenceFilterBloomFilterInfo.from(bloomFilterApplied, existenceFilter));
     }
   }
 
@@ -183,18 +167,10 @@ final class TestingHooks {
   abstract static class ExistenceFilterBloomFilterInfo {
 
     static ExistenceFilterBloomFilterInfo create(
-        @Nullable com.google.firebase.firestore.remote.BloomFilter bloomFilter,
-        boolean applied,
-        int hashCount,
-        int bitmapLength,
-        int padding) {
+        boolean applied, int hashCount, int bitmapLength, int padding) {
       return new AutoValue_TestingHooks_ExistenceFilterBloomFilterInfo(
-          bloomFilter, applied, hashCount, bitmapLength, padding);
+          applied, hashCount, bitmapLength, padding);
     }
-
-    /** The BloomFilter created from the existence filter; may be null if creating it failed. */
-    @Nullable
-    abstract com.google.firebase.firestore.remote.BloomFilter bloomFilter();
 
     /**
      * Returns whether a full requery was averted by using the bloom filter. If false, then
@@ -212,18 +188,14 @@ final class TestingHooks {
     /** Returns the number of bits of padding in the last byte of the bloom filter. */
     abstract int padding();
 
-    @Nullable
     static ExistenceFilterBloomFilterInfo from(
-        @Nullable com.google.firebase.firestore.remote.BloomFilter bloomFilter,
-        BloomFilterApplicationStatus bloomFilterStatus,
-        ExistenceFilter existenceFilter) {
+        boolean bloomFilterApplied, ExistenceFilter existenceFilter) {
       BloomFilter unchangedNames = existenceFilter.getUnchangedNames();
       if (unchangedNames == null) {
         return null;
       }
       return create(
-          bloomFilter,
-          /*bloomFilterApplied=*/ bloomFilterStatus == BloomFilterApplicationStatus.SUCCESS,
+          bloomFilterApplied,
           unchangedNames.getHashCount(),
           unchangedNames.getBits().getBitmap().size(),
           unchangedNames.getBits().getPadding());
