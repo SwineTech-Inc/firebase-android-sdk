@@ -25,10 +25,13 @@ plugins {
 firebaseLibrary {
   testLab.enabled = true
   publishSources = true
+  publishJavadoc = false
 }
 
 android {
   val targetSdkVersion: Int by rootProject
+
+  namespace = "com.google.firebase.sessions"
   compileSdk = 33
   defaultConfig {
     minSdk = 16
