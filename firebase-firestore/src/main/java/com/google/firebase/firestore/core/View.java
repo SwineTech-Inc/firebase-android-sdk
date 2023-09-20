@@ -389,7 +389,6 @@ public class View {
     if (resetComplete) {
       // Reset is complete, so any documents left in pendingResetDocuments should be marked
       // as limbo and will need a listen to re-sync
-      Logger.warn("Ben", "updateLimboDocuments reset Complete");
       for (DocumentKey documentKey : pendingResetDocuments) {
         Logger.warn("Ben", "updateLimboDocuments limbo doc");
         limboDocuments = limboDocuments.insert(documentKey);
