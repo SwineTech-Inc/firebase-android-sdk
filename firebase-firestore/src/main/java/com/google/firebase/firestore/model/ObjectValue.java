@@ -26,7 +26,6 @@ import com.google.firestore.v1.MapValue;
 import com.google.firestore.v1.Value;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
-import java.lang.ref.SoftReference;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -53,17 +52,26 @@ public final class ObjectValue implements Cloneable {
 
   /**
    * Serialized {@link MapValue} bytes backing a "fat" document. When non-null this is the durable
-   * source of truth; {@link #mergedValue} and {@link #softValue} are best-effort caches that may be
-   * reclaimed. Cleared when the document is mutated (it leaves the byte-backed regime).
+   * source of truth and the document is inflated transiently on demand (see {@link #buildProto()}).
+   * Cleared when the document is mutated (it leaves the byte-backed regime).
    */
   @Nullable private volatile ByteString serializedMapValue;
 
   /**
-   * Reclaimable cache of the inflated proto for a byte-backed document. The GC clears soft
-   * references before throwing OutOfMemoryError, so a large set of byte-backed documents self-limits
-   * to their compact {@link #serializedMapValue} form under memory pressure.
+   * Cache of individually-extracted field {@link Value}s for a byte-backed document. Because {@link
+   * #buildProto()} inflates byte-backed docs transiently (no whole-tree memo, to bound peak memory
+   * during a large sync), repeated single-field reads — the View's orderBy comparator reads the
+   * sort field O(n log n) times while ordering the result set, plus filters and projection — would
+   * otherwise re-parse the whole proto each time. Only the small extracted Values are kept (the
+   * whole tree stays transient), so this is far smaller than a whole-doc cache and does not
+   * reintroduce the accumulation a soft-referenced whole-tree cache caused. Guarded by {@link
+   * #lock}; dropped when the document leaves the byte-backed regime (mutation).
    */
-  @Nullable private volatile SoftReference<Value> softValue;
+  @GuardedBy("lock")
+  @Nullable private Map<FieldPath, Value> byteBackedFieldCache;
+
+  /** Test-only: counts how many times this document has been inflated from its byte backing. */
+  @VisibleForTesting int byteBackedInflations;
 
   /**
    * Documents whose serialized MapValue exceeds this size are held byte-backed to bound peak memory
@@ -93,9 +101,9 @@ public final class ObjectValue implements Cloneable {
   public static ObjectValue fromMap(Map<String, Value> value) {
     MapValue mapValue = MapValue.newBuilder().putAllFields(value).build();
     if (mapValue.getSerializedSize() > FAT_DOCUMENT_THRESHOLD_BYTES) {
-      // Fat document: retain only the compact bytes and inflate lazily/reclaimably. Not seeded into
-      // `softValue`, so pure accumulation (before the first field access) stays at ~bytes rather
-      // than a full inflated tree per document.
+      // Fat document: retain only the compact bytes and inflate transiently on demand, so pure
+      // accumulation (before any field access) stays at ~bytes rather than a full inflated tree per
+      // document.
       return new ObjectValue(mapValue.toByteString());
     }
     return new ObjectValue(Value.newBuilder().setMapValue(mapValue).build());
@@ -175,7 +183,35 @@ public final class ObjectValue implements Cloneable {
    * @return The value at the path or null if it doesn't exist.
    */
   public @Nullable Value get(FieldPath fieldPath) {
-    return extractNestedValue(buildProto(), fieldPath);
+    // Small/mutated docs: buildProto() is memoized (mergedValue), so this is a cheap tree walk.
+    if (serializedMapValue == null) {
+      return extractNestedValue(buildProto(), fieldPath);
+    }
+    // Never cache the whole-tree EMPTY_PATH value — that would re-retain the full document and
+    // defeat byte-backing.
+    if (fieldPath.isEmpty()) {
+      return extractNestedValue(buildProto(), fieldPath);
+    }
+    // Byte-backed docs re-parse on every buildProto(), so cache the extracted per-field Value.
+    // This keeps repeated single-field reads (orderBy comparator, filters, projection) at one parse
+    // per doc while the full inflation stays transient.
+    synchronized (lock) {
+      // A concurrent mutation may have left the byte-backed regime.
+      if (serializedMapValue == null) {
+        return extractNestedValue(buildProto(), fieldPath);
+      }
+      // containsKey (not != null): a missing field extracts to null and MUST be cached, otherwise
+      // sparse-field docs would re-parse on every comparison and re-create the sort stall.
+      if (byteBackedFieldCache != null && byteBackedFieldCache.containsKey(fieldPath)) {
+        return byteBackedFieldCache.get(fieldPath);
+      }
+      Value extracted = extractNestedValue(buildProto(), fieldPath);
+      if (byteBackedFieldCache == null) {
+        byteBackedFieldCache = new HashMap<>();
+      }
+      byteBackedFieldCache.put(fieldPath, extracted);
+      return extracted;
+    }
   }
 
   @Nullable
@@ -208,36 +244,21 @@ public final class ObjectValue implements Cloneable {
     if (value != null) {
       return value;
     }
-    // Snapshot the volatile SoftReference into a local before calling get().
-    SoftReference<Value> ref = this.softValue;
-    if (ref != null) {
-      value = ref.get();
-      if (value != null) {
-        return value;
-      }
-    }
 
     synchronized (lock) {
       value = mergedValue;
       if (value != null) {
         return value;
       }
-      ref = softValue;
-      if (ref != null) {
-        value = ref.get();
-        if (value != null) {
-          return value;
-        }
-      }
 
       ByteString bytes = serializedMapValue;
       if (bytes != null) {
         // Byte-backed document (mutations clear `serializedMapValue`, so `overlayMap` is empty
-        // here). Parse into the reclaimable cache but KEEP the bytes as the durable source of truth
-        // so the inflated tree can be dropped by the GC under memory pressure.
-        value = inflate(bytes);
-        softValue = new SoftReference<>(value);
-        return value;
+        // here). Inflate transiently and do NOT memoize the whole tree: it becomes unreachable
+        // again once the caller finishes with it, so the GC reclaims it continuously instead of the
+        // whole result set piling up. Per-field reads are cached in `byteBackedFieldCache` instead.
+        byteBackedInflations++;
+        return inflate(bytes);
       }
 
       assert (partialValue != null);
@@ -313,13 +334,11 @@ public final class ObjectValue implements Cloneable {
   private void setOverlay(FieldPath path, @Nullable Value value) {
     synchronized (lock) {
       if (serializedMapValue != null) {
-        // First mutation: leave the byte-backed regime. Inflate once as the mutation base (reusing
-        // the soft-cached tree if still present) and drop the compact backing.
-        SoftReference<Value> ref = softValue;
-        Value inflated = (ref != null) ? ref.get() : null;
-        partialValue = (inflated != null) ? inflated : inflate(serializedMapValue);
+        // First mutation: leave the byte-backed regime. Inflate as the mutation base and drop the
+        // compact backing and the per-field cache.
+        partialValue = inflate(serializedMapValue);
         serializedMapValue = null;
-        softValue = null;
+        byteBackedFieldCache = null;
         mergedValue = null;
       } else if (mergedValue != null) {
         partialValue = mergedValue;
