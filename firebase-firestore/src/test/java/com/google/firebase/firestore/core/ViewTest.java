@@ -18,11 +18,13 @@ import static com.google.firebase.firestore.testutil.TestUtil.ackTarget;
 import static com.google.firebase.firestore.testutil.TestUtil.deletedDoc;
 import static com.google.firebase.firestore.testutil.TestUtil.doc;
 import static com.google.firebase.firestore.testutil.TestUtil.docUpdates;
+import static com.google.firebase.firestore.testutil.TestUtil.field;
 import static com.google.firebase.firestore.testutil.TestUtil.filter;
 import static com.google.firebase.firestore.testutil.TestUtil.keySet;
 import static com.google.firebase.firestore.testutil.TestUtil.map;
 import static com.google.firebase.firestore.testutil.TestUtil.orderBy;
 import static com.google.firebase.firestore.testutil.TestUtil.targetChange;
+import static com.google.firebase.firestore.testutil.TestUtil.wrap;
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
 import static org.junit.Assert.assertEquals;
@@ -111,6 +113,69 @@ public class ViewTest {
         snapshot.getChanges());
     assertFalse(snapshot.isFromCache());
     assertTrue(snapshot.didSyncStateChange());
+  }
+
+  @Test
+  public void testChangesOnlyViewRetainsProjectedDocumentsButDeliversFullChanges() {
+    Query query =
+        Query.atPath(ResourcePath.fromString("rooms/eros/messages")).orderBy(orderBy("sort"));
+    View view =
+        new View(
+            new QueryOrPipeline.QueryWrapper(query),
+            DocumentKey.emptyKeySet(),
+            /* changesOnly= */ true);
+
+    MutableDocument doc1 = doc("rooms/eros/messages/1", 1, map("sort", 1L, "text", "msg1"));
+    MutableDocument doc2 = doc("rooms/eros/messages/2", 1, map("sort", 2L, "text", "msg2"));
+
+    // The initial snapshot delivers full documents as ADDED changes (the herd seed).
+    ViewSnapshot initial =
+        view.applyChanges(view.computeDocChanges(docUpdates(doc1, doc2))).getSnapshot();
+    assertEquals(
+        asList(
+            DocumentViewChange.create(Type.ADDED, doc1),
+            DocumentViewChange.create(Type.ADDED, doc2)),
+        initial.getChanges());
+
+    // A subsequent update (new version) is detected and its change still carries full data ...
+    MutableDocument doc1Updated =
+        doc("rooms/eros/messages/1", 2, map("sort", 1L, "text", "updated"));
+    ViewSnapshot second =
+        view.applyChanges(view.computeDocChanges(docUpdates(doc1Updated))).getSnapshot();
+    assertEquals(
+        asList(DocumentViewChange.create(Type.MODIFIED, doc1Updated)), second.getChanges());
+
+    // ... but the retained set (surfaced as the next snapshot's old documents) is projected: the
+    // ordering field "sort" is kept so the view stays correctly ordered, while all other fields
+    // (e.g. "text") are dropped to save memory.
+    Document retained = second.getOldDocuments().getDocument(doc2.getKey());
+    assertNotNull(retained);
+    assertEquals(wrap(2L), retained.getField(field("sort")));
+    assertNull(retained.getField(field("text")));
+  }
+
+  @Test
+  public void testChangesOnlyViewEmitsRemovedChangesForCrossDeviceDeletes() {
+    Query query =
+        Query.atPath(ResourcePath.fromString("rooms/eros/messages")).orderBy(orderBy("sort"));
+    View view =
+        new View(
+            new QueryOrPipeline.QueryWrapper(query),
+            DocumentKey.emptyKeySet(),
+            /* changesOnly= */ true);
+
+    MutableDocument doc1 = doc("rooms/eros/messages/1", 1, map("sort", 1L, "text", "msg1"));
+    MutableDocument doc2 = doc("rooms/eros/messages/2", 1, map("sort", 2L, "text", "msg2"));
+    applyChanges(view, doc1, doc2);
+
+    // A hard delete (e.g. an "undo" on another device) must still surface as a REMOVED change.
+    ViewSnapshot snapshot =
+        view.applyChanges(
+                view.computeDocChanges(docUpdates(deletedDoc("rooms/eros/messages/1", 2))))
+            .getSnapshot();
+    assertEquals(1, snapshot.getChanges().size());
+    assertEquals(Type.REMOVED, snapshot.getChanges().get(0).getType());
+    assertEquals(doc1.getKey(), snapshot.getChanges().get(0).getDocument().getKey());
   }
 
   @Test

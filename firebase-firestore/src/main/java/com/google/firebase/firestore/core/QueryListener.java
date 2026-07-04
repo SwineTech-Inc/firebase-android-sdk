@@ -80,6 +80,15 @@ public class QueryListener {
   }
 
   /**
+   * Whether this listener only observes document changes and never reads the full result set,
+   * allowing the query view to retain projected documents. Mirrors {@link
+   * EventManager.ListenOptions#changesOnly}.
+   */
+  public boolean isChangesOnly() {
+    return options != null && options.changesOnly;
+  }
+
+  /**
    * Applies the new ViewSnapshot to this listener, raising a user-facing event if applicable
    * (depending on what changed, whether the user has opted into metadata-only changes, etc.).
    * Returns true if a user-facing event was indeed raised.

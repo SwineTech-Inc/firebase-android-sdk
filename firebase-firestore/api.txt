@@ -604,12 +604,14 @@ package com.google.firebase.firestore {
     method public java.util.concurrent.Executor getExecutor();
     method public com.google.firebase.firestore.MetadataChanges getMetadataChanges();
     method public com.google.firebase.firestore.ListenSource getSource();
+    method public boolean isChangesOnly();
   }
 
   public static class SnapshotListenOptions.Builder {
     ctor public SnapshotListenOptions.Builder();
     method public com.google.firebase.firestore.SnapshotListenOptions build();
     method public com.google.firebase.firestore.SnapshotListenOptions.Builder setActivity(android.app.Activity);
+    method public com.google.firebase.firestore.SnapshotListenOptions.Builder setChangesOnly(boolean);
     method public com.google.firebase.firestore.SnapshotListenOptions.Builder setExecutor(java.util.concurrent.Executor);
     method public com.google.firebase.firestore.SnapshotListenOptions.Builder setMetadataChanges(com.google.firebase.firestore.MetadataChanges);
     method public com.google.firebase.firestore.SnapshotListenOptions.Builder setSource(com.google.firebase.firestore.ListenSource);

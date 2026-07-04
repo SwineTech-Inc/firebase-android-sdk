@@ -26,6 +26,7 @@ import com.google.firebase.firestore.core.ViewSnapshot.SyncState;
 import com.google.firebase.firestore.model.Document;
 import com.google.firebase.firestore.model.DocumentKey;
 import com.google.firebase.firestore.model.DocumentSet;
+import com.google.firebase.firestore.model.FieldPath;
 import com.google.firebase.firestore.model.MutableDocument;
 import com.google.firebase.firestore.remote.TargetChange;
 import java.util.ArrayList;
@@ -88,6 +89,16 @@ public class View {
 
   private final QueryOrPipeline query;
 
+  /**
+   * When true, the view retains only projected documents (key + version + sort fields + mutation
+   * state) instead of full documents. Enabled for "changes-only" listeners that never read {@code
+   * QuerySnapshot.getDocuments()}. Only valid for non-pipeline, non-limit queries.
+   */
+  private final boolean changesOnly;
+
+  /** The (non-key) sort fields retained when projecting documents in changes-only mode. */
+  private final List<FieldPath> projectedFields;
+
   private SyncState syncState;
 
   /**
@@ -109,12 +120,38 @@ public class View {
   private ImmutableSortedSet<DocumentKey> mutatedKeys;
 
   public View(QueryOrPipeline query, ImmutableSortedSet<DocumentKey> remoteDocuments) {
+    this(query, remoteDocuments, /* changesOnly= */ false);
+  }
+
+  public View(
+      QueryOrPipeline query, ImmutableSortedSet<DocumentKey> remoteDocuments, boolean changesOnly) {
     this.query = query;
+    // Changes-only projection is only safe for non-pipeline, non-limit queries: limit queries
+    // compare against limit-edge documents and pipelines evaluate over full documents. For anything
+    // else we transparently fall back to retaining full documents.
+    this.changesOnly = changesOnly && !query.isPipeline() && getLimit(query) == null;
+    this.projectedFields =
+        this.changesOnly ? computeProjectedFields(query) : Collections.emptyList();
     syncState = SyncState.NONE;
     documentSet = DocumentSet.emptySet(query.comparator());
     syncedDocuments = remoteDocuments;
     limboDocuments = DocumentKey.emptyKeySet();
     mutatedKeys = DocumentKey.emptyKeySet();
+  }
+
+  /**
+   * The comparator sorts on the normalized order-bys, so retaining exactly those (non-key) fields
+   * keeps a projected view's ordering identical to a full-document view. The key ordering needs no
+   * field value (it uses {@link Document#getKey()}).
+   */
+  private static List<FieldPath> computeProjectedFields(QueryOrPipeline query) {
+    List<FieldPath> fields = new ArrayList<>();
+    for (OrderBy orderBy : query.query().getNormalizedOrderBy()) {
+      if (!orderBy.getField().equals(FieldPath.KEY_PATH)) {
+        fields.add(orderBy.getField());
+      }
+    }
+    return fields;
   }
 
   public SyncState getSyncState() {
@@ -187,7 +224,7 @@ public class View {
 
       // Calculate change
       if (oldDoc != null && newDoc != null) {
-        boolean docsEqual = oldDoc.getData().equals(newDoc.getData());
+        boolean docsEqual = documentsEqual(oldDoc, newDoc);
         if (!docsEqual) {
           if (!shouldWaitForSyncedDocument(oldDoc, newDoc)) {
             changeSet.addChange(DocumentViewChange.create(Type.MODIFIED, newDoc));
@@ -283,6 +320,43 @@ public class View {
     return new DocumentChanges(newDocumentSet, changeSet, newMutatedKeys, needsRefill);
   }
 
+  /**
+   * Determines whether the previously-known {@code oldDoc} is equal to the incoming {@code newDoc}
+   * for the purpose of raising a MODIFIED change.
+   *
+   * <p>In changes-only mode the retained {@code oldDoc} is a projected handle without full data, so
+   * we cannot compare data directly. Instead we treat the documents as equal only when both are
+   * fully synced (no pending writes) and share the same version. Firestore advances a document's
+   * version on every write, so equal versions imply equal data. Every other case is treated as a
+   * change; this can only over-report a modification (never miss one), and write-acknowledgment
+   * transitions are still reconciled by {@link #shouldWaitForSyncedDocument}.
+   */
+  private boolean documentsEqual(Document oldDoc, Document newDoc) {
+    if (changesOnly) {
+      return !oldDoc.hasPendingWrites()
+          && !newDoc.hasPendingWrites()
+          && oldDoc.getVersion().equals(newDoc.getVersion());
+    }
+    return oldDoc.getData().equals(newDoc.getData());
+  }
+
+  /**
+   * Builds the projected document set to retain for a changes-only view. Unchanged documents in
+   * {@code docChanges.documentSet} were carried over from the previous (already projected) retained
+   * set, so only the added/modified documents need re-projecting — making this O(changes) except on
+   * the initial snapshot.
+   */
+  private DocumentSet projectRetainedSet(DocumentChanges docChanges) {
+    DocumentSet projected = docChanges.documentSet;
+    for (DocumentViewChange change : docChanges.changeSet.getChanges()) {
+      if (change.getType() != Type.REMOVED) {
+        MutableDocument doc = (MutableDocument) change.getDocument();
+        projected = projected.add(doc.copyWithProjectedData(projectedFields));
+      }
+    }
+    return projected;
+  }
+
   private boolean shouldWaitForSyncedDocument(Document oldDoc, Document newDoc) {
     // We suppress the initial change event for documents that were modified as part of a write
     // acknowledgment (for example when the value of a server transform is applied) as Watch will
@@ -333,7 +407,10 @@ public class View {
     hardAssert(!docChanges.needsRefill, "Cannot apply changes that need a refill");
 
     DocumentSet oldDocumentSet = documentSet;
-    documentSet = docChanges.documentSet;
+    // Retain only projected documents for changes-only views. The ViewSnapshot built below still
+    // carries the full `docChanges.documentSet` so the initial snapshot can seed the listener with
+    // full data; that full set is released once the next snapshot replaces it.
+    documentSet = changesOnly ? projectRetainedSet(docChanges) : docChanges.documentSet;
     mutatedKeys = docChanges.mutatedKeys;
 
     // Sort changes based on type and query comparator.

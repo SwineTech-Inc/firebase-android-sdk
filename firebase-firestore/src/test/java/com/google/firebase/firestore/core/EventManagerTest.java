@@ -64,9 +64,11 @@ public class EventManagerTest {
     manager.removeQueryListener(listener2);
     verify(syncSpy, times(1))
         .listen(
-            qop,
+            eq(qop),
             /** shouldListenToRemote= */
-            true);
+            eq(true),
+            /** changesOnly= */
+            anyBoolean());
     verify(syncSpy, times(1))
         .stopListening(
             qop,
@@ -106,8 +108,8 @@ public class EventManagerTest {
     eventManager.addQueryListener(spy2);
     eventManager.addQueryListener(spy3);
 
-    verify(syncSpy, times(1)).listen(eq(qop1), anyBoolean());
-    verify(syncSpy, times(1)).listen(eq(qop2), anyBoolean());
+    verify(syncSpy, times(1)).listen(eq(qop1), anyBoolean(), anyBoolean());
+    verify(syncSpy, times(1)).listen(eq(qop2), anyBoolean(), anyBoolean());
 
     ViewSnapshot snap1 = mock(ViewSnapshot.class);
     when(snap1.getQuery()).thenReturn(qop1);
