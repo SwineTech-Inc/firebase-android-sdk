@@ -366,4 +366,91 @@ public class ObjectValueTest {
     assertEquals(wrapObject("a", 1), byteBacked);
     assertEquals(wrapObject("a", 9), clone);
   }
+
+  @Test
+  public void testByteBackedCachesMissingFieldWithoutReparsing() {
+    // H1 guard: a doc missing the queried field extracts to null and MUST be cached (containsKey),
+    // otherwise sparse-field sorts re-parse on every comparison and re-create the sort stall. Two
+    // reads of a missing field must inflate the proto only once.
+    ObjectValue byteBacked = ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
+    assertTrue(byteBacked.isByteBacked());
+
+    assertNull(byteBacked.get(field("missing")));
+    assertNull(byteBacked.get(field("missing")));
+
+    assertEquals(1, byteBacked.byteBackedInflations);
+    assertTrue(byteBacked.isByteBacked());
+  }
+
+  @Test
+  public void testByteBackedCachesPresentFieldWithoutReparsing() {
+    // Repeated reads of the same present field parse the proto once, then hit the per-field cache;
+    // the document stays byte-backed (the compact backing is never dropped by a read).
+    ObjectValue byteBacked = ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
+
+    assertEquals(wrap(1), byteBacked.get(field("a")));
+    assertEquals(wrap(1), byteBacked.get(field("a")));
+
+    assertEquals(1, byteBacked.byteBackedInflations);
+    assertTrue(byteBacked.isByteBacked());
+    assertNotNull(byteBacked.getSerializedMapValueOrNull());
+  }
+
+  @Test
+  public void testByteBackedFieldCacheClearedOnMutation() {
+    // A mutation leaves the byte-backed regime and drops the per-field cache, so a subsequent read
+    // returns the mutated value, not a stale cached one.
+    ObjectValue byteBacked = ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
+    assertEquals(wrap(1), byteBacked.get(field("a"))); // populates the per-field cache
+
+    byteBacked.set(field("a"), wrap(9));
+
+    assertFalse(byteBacked.isByteBacked());
+    assertEquals(wrap(9), byteBacked.get(field("a")));
+    assertEquals(wrapObject("a", 9, "b", 2), byteBacked);
+  }
+
+  @Test
+  public void testByteBackedConcurrentGetAndGetFieldsMap() throws InterruptedException {
+    // Documents thread-safety intent: a worker-thread get(field) and a user-thread getFieldsMap()
+    // can race on the same byte-backed instance (overlapping snapshots). Assert no exception and
+    // correct values under contention.
+    ObjectValue byteBacked =
+        ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", map("c", "str"))));
+    int iterations = 500;
+    java.util.concurrent.atomic.AtomicReference<Throwable> failure =
+        new java.util.concurrent.atomic.AtomicReference<>();
+
+    Thread fieldReader =
+        new Thread(
+            () -> {
+              try {
+                for (int i = 0; i < iterations; i++) {
+                  assertEquals(wrap(1), byteBacked.get(field("a")));
+                  assertEquals(wrap("str"), byteBacked.get(field("b.c")));
+                }
+              } catch (Throwable t) {
+                failure.set(t);
+              }
+            });
+    Thread wholeReader =
+        new Thread(
+            () -> {
+              try {
+                for (int i = 0; i < iterations; i++) {
+                  assertEquals(wrap(1), byteBacked.getFieldsMap().get("a"));
+                }
+              } catch (Throwable t) {
+                failure.set(t);
+              }
+            });
+
+    fieldReader.start();
+    wholeReader.start();
+    fieldReader.join();
+    wholeReader.join();
+
+    assertNull(failure.get());
+    assertTrue(byteBacked.isByteBacked());
+  }
 }
