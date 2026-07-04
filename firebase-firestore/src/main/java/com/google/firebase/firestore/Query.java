@@ -1141,7 +1141,7 @@ public class Query {
     checkNotNull(listener, "Provided EventListener must not be null.");
     return addSnapshotListenerInternal(
         options.getExecutor(),
-        internalOptions(options.getMetadataChanges(), options.getSource()),
+        internalOptions(options.getMetadataChanges(), options.getSource(), options.isChangesOnly()),
         options.getActivity(),
         listener);
   }
@@ -1272,11 +1272,17 @@ public class Query {
 
   private static ListenOptions internalOptions(
       MetadataChanges metadataChanges, ListenSource source) {
+    return internalOptions(metadataChanges, source, /* changesOnly= */ false);
+  }
+
+  private static ListenOptions internalOptions(
+      MetadataChanges metadataChanges, ListenSource source, boolean changesOnly) {
     ListenOptions internalOptions = new ListenOptions();
     internalOptions.includeDocumentMetadataChanges = (metadataChanges == MetadataChanges.INCLUDE);
     internalOptions.includeQueryMetadataChanges = (metadataChanges == MetadataChanges.INCLUDE);
     internalOptions.waitForSyncWhenOnline = false;
     internalOptions.source = source;
+    internalOptions.changesOnly = changesOnly;
     return internalOptions;
   }
 }

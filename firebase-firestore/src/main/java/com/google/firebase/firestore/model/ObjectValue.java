@@ -14,14 +14,19 @@
 
 package com.google.firebase.firestore.model;
 
+import static com.google.firebase.firestore.util.Assert.fail;
 import static com.google.firebase.firestore.util.Assert.hardAssert;
 
 import androidx.annotation.GuardedBy;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 import com.google.firebase.firestore.model.mutation.FieldMask;
 import com.google.firestore.v1.MapValue;
 import com.google.firestore.v1.Value;
+import com.google.protobuf.ByteString;
+import com.google.protobuf.InvalidProtocolBufferException;
+import java.lang.ref.SoftReference;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -47,6 +52,27 @@ public final class ObjectValue implements Cloneable {
   @Nullable private volatile Value mergedValue;
 
   /**
+   * Serialized {@link MapValue} bytes backing a "fat" document. When non-null this is the durable
+   * source of truth; {@link #mergedValue} and {@link #softValue} are best-effort caches that may be
+   * reclaimed. Cleared when the document is mutated (it leaves the byte-backed regime).
+   */
+  @Nullable private volatile ByteString serializedMapValue;
+
+  /**
+   * Reclaimable cache of the inflated proto for a byte-backed document. The GC clears soft
+   * references before throwing OutOfMemoryError, so a large set of byte-backed documents self-limits
+   * to their compact {@link #serializedMapValue} form under memory pressure.
+   */
+  @Nullable private volatile SoftReference<Value> softValue;
+
+  /**
+   * Documents whose serialized MapValue exceeds this size are held byte-backed to bound peak memory
+   * (for example, during a large initial sync). Smaller documents keep the inflated {@link
+   * #mergedValue}, so normal small-document usage is unaffected.
+   */
+  private static final int FAT_DOCUMENT_THRESHOLD_BYTES = 256;
+
+  /**
    * The immutable Value proto for this object. Local mutations are stored in `overlayMap` and only
    * applied when {@link #buildProto()} is invoked.
    * <p>
@@ -65,7 +91,24 @@ public final class ObjectValue implements Cloneable {
   private final Map<String, Object> overlayMap = new HashMap<>();
 
   public static ObjectValue fromMap(Map<String, Value> value) {
-    return new ObjectValue(Values.encodeValue(value));
+    MapValue mapValue = MapValue.newBuilder().putAllFields(value).build();
+    if (mapValue.getSerializedSize() > FAT_DOCUMENT_THRESHOLD_BYTES) {
+      // Fat document: retain only the compact bytes and inflate lazily/reclaimably. Not seeded into
+      // `softValue`, so pure accumulation (before the first field access) stays at ~bytes rather
+      // than a full inflated tree per document.
+      return new ObjectValue(mapValue.toByteString());
+    }
+    return new ObjectValue(Value.newBuilder().setMapValue(mapValue).build());
+  }
+
+  /** Creates a byte-backed ObjectValue from the serialized bytes of its {@link MapValue}. */
+  public static ObjectValue fromMapValueBytes(ByteString serializedMapValue) {
+    return new ObjectValue(serializedMapValue);
+  }
+
+  private ObjectValue(ByteString serializedMapValue) {
+    // `mergedValue`/`partialValue` intentionally left null; `serializedMapValue` is the backing.
+    this.serializedMapValue = serializedMapValue;
   }
 
   public ObjectValue(Value value) {
@@ -82,6 +125,19 @@ public final class ObjectValue implements Cloneable {
 
   public Map<String, Value> getFieldsMap() {
     return buildProto().getMapValue().getFieldsMap();
+  }
+
+  /**
+   * Returns the backing serialized {@link MapValue} bytes if this ObjectValue is byte-backed, or
+   * null otherwise. Lets callers (for example, persistence) avoid inflating the full proto tree.
+   */
+  public @Nullable ByteString getSerializedMapValueOrNull() {
+    return serializedMapValue;
+  }
+
+  @VisibleForTesting
+  boolean isByteBacked() {
+    return serializedMapValue != null;
   }
 
   /** Recursively extracts the FieldPaths that are set in this ObjectValue. */
@@ -149,32 +205,73 @@ public final class ObjectValue implements Cloneable {
     // Use double-checked locking to avoid acquiring a lock in the cases where the memoized result
     // has already been calculated (https://en.wikipedia.org/wiki/Double-checked_locking).
     Value value = this.mergedValue;
-
-    if (value == null) {
-      synchronized (lock) {
-        value = mergedValue;
-        if (value == null) {
-          assert (partialValue != null);
-          if (overlayMap.isEmpty()) {
-            value = partialValue;
-          } else {
-            MapValue mergedResult = applyOverlay(partialValue, FieldPath.EMPTY_PATH, overlayMap);
-            if (mergedResult == null) {
-              value = partialValue;
-            } else {
-              value = Value.newBuilder().setMapValue(mergedResult).build();
-            }
-          }
-
-          assert (value != null);
-          mergedValue = value;
-          partialValue = null;
-          overlayMap.clear();
-        }
+    if (value != null) {
+      return value;
+    }
+    // Snapshot the volatile SoftReference into a local before calling get().
+    SoftReference<Value> ref = this.softValue;
+    if (ref != null) {
+      value = ref.get();
+      if (value != null) {
+        return value;
       }
     }
 
+    synchronized (lock) {
+      value = mergedValue;
+      if (value != null) {
+        return value;
+      }
+      ref = softValue;
+      if (ref != null) {
+        value = ref.get();
+        if (value != null) {
+          return value;
+        }
+      }
+
+      ByteString bytes = serializedMapValue;
+      if (bytes != null) {
+        // Byte-backed document (mutations clear `serializedMapValue`, so `overlayMap` is empty
+        // here). Parse into the reclaimable cache but KEEP the bytes as the durable source of truth
+        // so the inflated tree can be dropped by the GC under memory pressure.
+        value = inflate(bytes);
+        softValue = new SoftReference<>(value);
+        return value;
+      }
+
+      assert (partialValue != null);
+      if (overlayMap.isEmpty()) {
+        value = partialValue;
+      } else {
+        MapValue mergedResult = applyOverlay(partialValue, FieldPath.EMPTY_PATH, overlayMap);
+        if (mergedResult == null) {
+          value = partialValue;
+        } else {
+          value = Value.newBuilder().setMapValue(mergedResult).build();
+        }
+      }
+
+      assert (value != null);
+      mergedValue = value;
+      partialValue = null;
+      overlayMap.clear();
+    }
+
     return value;
+  }
+
+  /** Inflates the serialized MapValue bytes into a Value, validating it lazily. */
+  private static Value inflate(ByteString serializedMapValue) {
+    try {
+      Value value = Value.newBuilder().setMapValue(MapValue.parseFrom(serializedMapValue)).build();
+      hardAssert(
+          !ServerTimestamps.isServerTimestamp(value),
+          "ServerTimestamps should not be used as an ObjectValue");
+      return value;
+    } catch (InvalidProtocolBufferException e) {
+      throw fail(e, "Failed to parse byte-backed ObjectValue");
+    }
   }
 
   /**
@@ -215,7 +312,16 @@ public final class ObjectValue implements Cloneable {
    */
   private void setOverlay(FieldPath path, @Nullable Value value) {
     synchronized (lock) {
-      if (mergedValue != null) {
+      if (serializedMapValue != null) {
+        // First mutation: leave the byte-backed regime. Inflate once as the mutation base (reusing
+        // the soft-cached tree if still present) and drop the compact backing.
+        SoftReference<Value> ref = softValue;
+        Value inflated = (ref != null) ? ref.get() : null;
+        partialValue = (inflated != null) ? inflated : inflate(serializedMapValue);
+        serializedMapValue = null;
+        softValue = null;
+        mergedValue = null;
+      } else if (mergedValue != null) {
         partialValue = mergedValue;
         mergedValue = null;
       }
@@ -322,6 +428,11 @@ public final class ObjectValue implements Cloneable {
 
   @NonNull
   public ObjectValue clone() {
+    ByteString bytes = serializedMapValue;
+    if (bytes != null) {
+      // Share the immutable backing bytes — no inflation. The clone gets its own soft cache.
+      return ObjectValue.fromMapValueBytes(bytes);
+    }
     return new ObjectValue(buildProto());
   }
 }

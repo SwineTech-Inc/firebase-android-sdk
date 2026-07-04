@@ -40,11 +40,15 @@ public final class SnapshotListenOptions {
   /** The activity to scope the listener to. */
   private final Activity activity;
 
+  /** Whether the listener only observes document changes and never reads the full result set. */
+  private final boolean changesOnly;
+
   private SnapshotListenOptions(Builder builder) {
     this.metadataChanges = builder.metadataChanges;
     this.source = builder.source;
     this.executor = builder.executor;
     this.activity = builder.activity;
+    this.changesOnly = builder.changesOnly;
   }
 
   /**
@@ -88,12 +92,24 @@ public final class SnapshotListenOptions {
     return activity;
   }
 
+  /**
+   * Returns whether this listener only observes document changes and never reads the full result
+   * set. When true, the query view may retain projected documents instead of full data to reduce
+   * memory. Only set this for listeners that never call {@code QuerySnapshot.getDocuments()}.
+   *
+   * @return Whether the listener is changes-only.
+   */
+  public boolean isChangesOnly() {
+    return changesOnly;
+  }
+
   /** Builder for constructing {@link SnapshotListenOptions} instances. */
   public static class Builder {
     private MetadataChanges metadataChanges = MetadataChanges.EXCLUDE;
     private ListenSource source = ListenSource.DEFAULT;
     private Executor executor = Executors.DEFAULT_CALLBACK_EXECUTOR;
     private Activity activity = null;
+    private boolean changesOnly = false;
 
     public Builder() {}
 
@@ -151,6 +167,20 @@ public final class SnapshotListenOptions {
     }
 
     /**
+     * Sets whether this listener only observes document changes (never the full result set),
+     * allowing the query view to retain projected documents instead of full data. Only set this for
+     * listeners that never call {@code QuerySnapshot.getDocuments()}.
+     *
+     * @param changesOnly Whether the listener is changes-only.
+     * @return This Builder instance to allow chaining of method calls.
+     */
+    @NonNull
+    public Builder setChangesOnly(boolean changesOnly) {
+      this.changesOnly = changesOnly;
+      return this;
+    }
+
+    /**
      * Constructs a {@link SnapshotListenOptions} instance using the current settings in this
      * Builder.
      *
@@ -170,7 +200,8 @@ public final class SnapshotListenOptions {
     return metadataChanges == that.metadataChanges
         && source == that.source
         && executor.equals(that.executor)
-        && activity.equals(that.activity);
+        && activity.equals(that.activity)
+        && changesOnly == that.changesOnly;
   }
 
   @Override
@@ -179,6 +210,7 @@ public final class SnapshotListenOptions {
     result = 31 * result + source.hashCode();
     result = 31 * result + executor.hashCode();
     result = 31 * result + (activity != null ? activity.hashCode() : 0);
+    result = 31 * result + (changesOnly ? 1 : 0);
     return result;
   }
 
@@ -193,6 +225,8 @@ public final class SnapshotListenOptions {
         + executor
         + ", activity="
         + activity
+        + ", changesOnly="
+        + changesOnly
         + '}';
   }
 }

@@ -34,9 +34,11 @@ import com.google.firebase.firestore.model.mutation.MutationBatch;
 import com.google.firebase.firestore.remote.RemoteSerializer;
 import com.google.firestore.admin.v1.Index;
 import com.google.firestore.v1.DocumentTransform.FieldTransform;
+import com.google.firestore.v1.MapValue;
 import com.google.firestore.v1.Write;
 import com.google.firestore.v1.Write.Builder;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -94,7 +96,19 @@ public final class LocalSerializer {
     com.google.firestore.v1.Document.Builder builder =
         com.google.firestore.v1.Document.newBuilder();
     builder.setName(rpcSerializer.encodeKey(document.getKey()));
-    builder.putAllFields(document.getData().getFieldsMap());
+    ByteString mapBytes = document.getData().getSerializedMapValueOrNull();
+    if (mapBytes != null) {
+      // Byte-backed document: reconstruct its fields transiently (one document, discarded here)
+      // WITHOUT inflating and retaining the full Value tree on the ObjectValue. This keeps a large
+      // remote sync from pinning every document's inflated tree while persisting to SQLite.
+      try {
+        builder.putAllFields(MapValue.parseFrom(mapBytes).getFieldsMap());
+      } catch (InvalidProtocolBufferException e) {
+        throw fail(e, "Failed to decode byte-backed ObjectValue during encode");
+      }
+    } else {
+      builder.putAllFields(document.getData().getFieldsMap());
+    }
     Timestamp updateTime = document.getVersion().getTimestamp();
     builder.setUpdateTime(rpcSerializer.encodeTimestamp(updateTime));
     return builder.build();
