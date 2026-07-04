@@ -69,6 +69,13 @@ public final class EventManager implements SyncEngineCallback {
     /** Sets the source the query listens to. */
     public ListenSource source = ListenSource.DEFAULT;
 
+    /**
+     * When true, this listener only observes document changes (never the full result set), allowing
+     * the query view to retain projected documents instead of full data. Must only be set for
+     * listeners that never read {@code QuerySnapshot.getDocuments()}.
+     */
+    public boolean changesOnly = false;
+
     public DocumentSnapshot.ServerTimestampBehavior serverTimestampBehavior =
         DocumentSnapshot.ServerTimestampBehavior.NONE;
   }
@@ -146,14 +153,16 @@ public final class EventManager implements SyncEngineCallback {
             syncEngine.listen(
                 query,
                 /** shouldListenToRemote= */
-                true);
+                true,
+                queryListener.isChangesOnly());
         break;
       case INITIALIZE_LOCAL_LISTEN_ONLY:
         queryInfo.targetId =
             syncEngine.listen(
                 query,
                 /** shouldListenToRemote= */
-                false);
+                false,
+                queryListener.isChangesOnly());
         break;
       case REQUIRE_WATCH_CONNECTION_ONLY:
         syncEngine.listenToRemoteStore(query);

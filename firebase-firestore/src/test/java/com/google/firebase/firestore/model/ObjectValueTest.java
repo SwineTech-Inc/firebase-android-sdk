@@ -21,11 +21,16 @@ import static com.google.firebase.firestore.testutil.TestUtil.wrap;
 import static com.google.firebase.firestore.testutil.TestUtil.wrapObject;
 import static junit.framework.TestCase.assertTrue;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 
 import com.google.firebase.firestore.model.mutation.FieldMask;
 import com.google.firestore.v1.MapValue;
 import com.google.firestore.v1.Value;
+import com.google.protobuf.ByteString;
+import java.util.HashMap;
 import java.util.Map;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -284,5 +289,81 @@ public class ObjectValueTest {
     ObjectValue objectValue = wrapObject("a", map("b", fooString));
     objectValue.set(field("a.c"), fooValue);
     assertEquals(wrapObject("a", map("b", fooString, "c", fooString)), objectValue);
+  }
+
+  // --- Byte-backed ObjectValue (Track C) ---------------------------------------------------------
+
+  /** Returns the serialized MapValue bytes of the given ObjectValue (for building byte-backed ones). */
+  private static ByteString mapValueBytes(ObjectValue value) {
+    return value.get(FieldPath.EMPTY_PATH).getMapValue().toByteString();
+  }
+
+  @Test
+  public void testGatesByteBackingBySize() {
+    // Small documents stay inflated; large documents are held byte-backed.
+    Map<String, Value> small = new HashMap<>();
+    small.put("a", wrap("b"));
+    assertFalse(ObjectValue.fromMap(small).isByteBacked());
+
+    char[] filler = new char[2048];
+    java.util.Arrays.fill(filler, 'x');
+    Map<String, Value> fat = new HashMap<>();
+    fat.put("filler", wrap(new String(filler)));
+    assertTrue(ObjectValue.fromMap(fat).isByteBacked());
+  }
+
+  @Test
+  public void testByteBackedReadsMatchInflated() {
+    ObjectValue inflated = wrapObject("a", 1, "b", map("c", "str"), "d", true);
+    ObjectValue byteBacked = ObjectValue.fromMapValueBytes(mapValueBytes(inflated));
+
+    assertTrue(byteBacked.isByteBacked());
+    assertEquals(inflated, byteBacked);
+    assertEquals(inflated.hashCode(), byteBacked.hashCode());
+    assertEquals(inflated.getFieldsMap(), byteBacked.getFieldsMap());
+    assertEquals(inflated.getFieldMask(), byteBacked.getFieldMask());
+    assertEquals(wrap(1), byteBacked.get(field("a")));
+    assertEquals(wrap("str"), byteBacked.get(field("b.c")));
+    assertNull(byteBacked.get(field("missing")));
+  }
+
+  @Test
+  public void testByteBackedStaysByteBackedAfterRead() {
+    // Guards the make-or-break: inflating for a read must NOT drop the compact backing (otherwise
+    // a large sync would pin every inflated tree). serialized survives reads; only a soft cache is
+    // populated.
+    ObjectValue byteBacked = ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
+    byteBacked.get(field("a"));
+    byteBacked.getFieldsMap();
+    byteBacked.getFieldMask();
+    assertTrue(byteBacked.isByteBacked());
+    assertNotNull(byteBacked.getSerializedMapValueOrNull());
+  }
+
+  @Test
+  public void testByteBackedLeavesRegimeOnMutation() {
+    ObjectValue byteBacked = ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
+    assertTrue(byteBacked.isByteBacked());
+
+    byteBacked.set(field("a"), wrap(9));
+    assertFalse(byteBacked.isByteBacked());
+    assertNull(byteBacked.getSerializedMapValueOrNull());
+    assertEquals(wrapObject("a", 9, "b", 2), byteBacked);
+  }
+
+  @Test
+  public void testByteBackedCloneSharesBytesAndIsIndependent() {
+    ByteString bytes = mapValueBytes(wrapObject("a", 1));
+    ObjectValue byteBacked = ObjectValue.fromMapValueBytes(bytes);
+    ObjectValue clone = byteBacked.clone();
+
+    assertTrue(clone.isByteBacked());
+    // Clone shares the immutable backing bytes (no inflation on clone).
+    assertSame(byteBacked.getSerializedMapValueOrNull(), clone.getSerializedMapValueOrNull());
+
+    // Mutating the clone leaves the original untouched.
+    clone.set(field("a"), wrap(9));
+    assertEquals(wrapObject("a", 1), byteBacked);
+    assertEquals(wrapObject("a", 9), clone);
   }
 }
