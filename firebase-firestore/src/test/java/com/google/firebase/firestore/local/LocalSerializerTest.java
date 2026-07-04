@@ -329,6 +329,23 @@ public final class LocalSerializerTest {
   }
 
   @Test
+  public void testEncodesByteBackedFoundDocument() {
+    // A large document is held byte-backed by ObjectValue; encodeDocument must persist it from its
+    // backing bytes (via the byte-preserving path, without inflating/retaining the tree) and
+    // round-trip losslessly.
+    char[] filler = new char[2048];
+    java.util.Arrays.fill(filler, 'x');
+    MutableDocument document = doc("some/path", 42, map("foo", "bar", "big", new String(filler)));
+
+    com.google.firebase.firestore.proto.MaybeDocument encoded =
+        serializer.encodeMaybeDocument(document);
+    MutableDocument decoded = serializer.decodeMaybeDocument(encoded);
+
+    assertEquals(document, decoded);
+    assertEquals(document.getData().getFieldsMap(), decoded.getData().getFieldsMap());
+  }
+
+  @Test
   public void testEncodesDeletedDocument() {
     MutableDocument deletedDoc = deletedDoc("some/path", 42);
 

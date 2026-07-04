@@ -201,6 +201,10 @@ public class SyncEngine implements RemoteStore.RemoteStoreCallback {
    * @return the target ID assigned to the query.
    */
   public int listen(QueryOrPipeline query, boolean shouldListenToRemote) {
+    return listen(query, shouldListenToRemote, /* changesOnly= */ false);
+  }
+
+  public int listen(QueryOrPipeline query, boolean shouldListenToRemote, boolean changesOnly) {
     assertCallback("listen");
     hardAssert(!queryViewsByQuery.containsKey(query), "We already listen to query: %s", query);
 
@@ -208,7 +212,7 @@ public class SyncEngine implements RemoteStore.RemoteStoreCallback {
 
     ViewSnapshot viewSnapshot =
         initializeViewAndComputeSnapshot(
-            query, targetData.getTargetId(), targetData.getResumeToken());
+            query, targetData.getTargetId(), targetData.getResumeToken(), changesOnly);
     syncEngineListener.onViewSnapshots(Collections.singletonList(viewSnapshot));
 
     if (shouldListenToRemote) {
@@ -219,7 +223,7 @@ public class SyncEngine implements RemoteStore.RemoteStoreCallback {
   }
 
   private ViewSnapshot initializeViewAndComputeSnapshot(
-      QueryOrPipeline query, int targetId, ByteString resumeToken) {
+      QueryOrPipeline query, int targetId, ByteString resumeToken, boolean changesOnly) {
     QueryResult queryResult = localStore.executeQuery(query, /* usePreviousResults= */ true);
 
     SyncState currentTargetSyncState = SyncState.NONE;
@@ -238,7 +242,7 @@ public class SyncEngine implements RemoteStore.RemoteStoreCallback {
     // TODO(wuandy): Investigate if we can extract the logic of view change computation and
     // update tracked limbo in one place, and have both emitNewSnapsAndNotifyLocalStore
     // and here to call that.
-    View view = new View(query, queryResult.getRemoteKeys());
+    View view = new View(query, queryResult.getRemoteKeys(), changesOnly);
     View.DocumentChanges viewDocChanges = view.computeDocChanges(queryResult.getDocuments());
     ViewChange viewChange = view.applyChanges(viewDocChanges, synthesizedCurrentChange);
     updateTrackedLimboDocuments(viewChange.getLimboChanges(), targetId);
