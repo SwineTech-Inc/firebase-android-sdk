@@ -131,27 +131,12 @@ public class View {
     // else we transparently fall back to retaining full documents.
     this.changesOnly = changesOnly && !query.isPipeline() && getLimit(query) == null;
     this.projectedFields =
-        this.changesOnly ? computeProjectedFields(query) : Collections.emptyList();
+        this.changesOnly ? query.query().getNonKeyOrderByFields() : Collections.emptyList();
     syncState = SyncState.NONE;
     documentSet = DocumentSet.emptySet(query.comparator());
     syncedDocuments = remoteDocuments;
     limboDocuments = DocumentKey.emptyKeySet();
     mutatedKeys = DocumentKey.emptyKeySet();
-  }
-
-  /**
-   * The comparator sorts on the normalized order-bys, so retaining exactly those (non-key) fields
-   * keeps a projected view's ordering identical to a full-document view. The key ordering needs no
-   * field value (it uses {@link Document#getKey()}).
-   */
-  private static List<FieldPath> computeProjectedFields(QueryOrPipeline query) {
-    List<FieldPath> fields = new ArrayList<>();
-    for (OrderBy orderBy : query.query().getNormalizedOrderBy()) {
-      if (!orderBy.getField().equals(FieldPath.KEY_PATH)) {
-        fields.add(orderBy.getField());
-      }
-    }
-    return fields;
   }
 
   public SyncState getSyncState() {
@@ -325,11 +310,15 @@ public class View {
    * for the purpose of raising a MODIFIED change.
    *
    * <p>In changes-only mode the retained {@code oldDoc} is a projected handle without full data, so
-   * we cannot compare data directly. Instead we treat the documents as equal only when both are
-   * fully synced (no pending writes) and share the same version. Firestore advances a document's
-   * version on every write, so equal versions imply equal data. Every other case is treated as a
-   * change; this can only over-report a modification (never miss one), and write-acknowledgment
-   * transitions are still reconciled by {@link #shouldWaitForSyncedDocument}.
+   * data cannot be compared directly. Instead the documents are treated as equal only when both are
+   * fully synced (no pending writes) and share the same version: {@code LocalStore} keeps the first
+   * synced value seen at a version and the server advances the version on every write, so a synced
+   * doc can never be replaced by a different synced doc at the same version. This can only
+   * over-report a modification (never miss one) — e.g. a write acknowledgment surfaces as MODIFIED
+   * rather than METADATA — and write-acknowledgment transitions are still reconciled by {@link
+   * #shouldWaitForSyncedDocument}.
+   *
+   * <p>Full-data views keep the exact upstream data comparison.
    */
   private boolean documentsEqual(Document oldDoc, Document newDoc) {
     if (changesOnly) {
@@ -350,8 +339,14 @@ public class View {
     DocumentSet projected = docChanges.documentSet;
     for (DocumentViewChange change : docChanges.changeSet.getChanges()) {
       if (change.getType() != Type.REMOVED) {
-        MutableDocument doc = (MutableDocument) change.getDocument();
-        projected = projected.add(doc.copyWithProjectedData(projectedFields));
+        Document changed = change.getDocument();
+        if (changed instanceof MutableDocument) {
+          projected = projected.add(((MutableDocument) changed).copyWithProjectedData(projectedFields));
+        } else {
+          // Only MutableDocument can be projected; retain anything else as-is (defensive — every
+          // Document reaching a view is a MutableDocument today).
+          projected = projected.add(changed);
+        }
       }
     }
     return projected;

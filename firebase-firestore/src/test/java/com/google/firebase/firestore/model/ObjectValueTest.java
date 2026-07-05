@@ -330,8 +330,8 @@ public class ObjectValueTest {
   @Test
   public void testByteBackedStaysByteBackedAfterRead() {
     // Guards the make-or-break: inflating for a read must NOT drop the compact backing (otherwise
-    // a large sync would pin every inflated tree). serialized survives reads; only a soft cache is
-    // populated.
+    // a large sync would pin every inflated tree). The serialized bytes survive reads; only the
+    // per-field cache is populated.
     ObjectValue byteBacked = ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
     byteBacked.get(field("a"));
     byteBacked.getFieldsMap();

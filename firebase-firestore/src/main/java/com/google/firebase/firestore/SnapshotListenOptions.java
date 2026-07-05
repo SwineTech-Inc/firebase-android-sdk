@@ -95,7 +95,8 @@ public final class SnapshotListenOptions {
   /**
    * Returns whether this listener only observes document changes and never reads the full result
    * set. When true, the query view may retain projected documents instead of full data to reduce
-   * memory. Only set this for listeners that never call {@code QuerySnapshot.getDocuments()}.
+   * memory. See {@link Builder#setChangesOnly(boolean)} for the full contract (projected-only
+   * {@code getDocuments()} / removed documents, possible spurious {@code MODIFIED} on write-ack).
    *
    * @return Whether the listener is changes-only.
    */
@@ -168,8 +169,22 @@ public final class SnapshotListenOptions {
 
     /**
      * Sets whether this listener only observes document changes (never the full result set),
-     * allowing the query view to retain projected documents instead of full data. Only set this for
-     * listeners that never call {@code QuerySnapshot.getDocuments()}.
+     * allowing the query view to retain projected documents instead of full data to reduce memory.
+     *
+     * <p>Only set this for listeners that consume {@code QuerySnapshot.getDocumentChanges()} and
+     * never the full result set. In changes-only mode the view retains only each document's key,
+     * version, and the query's orderBy sort fields, so:
+     *
+     * <ul>
+     *   <li>{@code QuerySnapshot.getDocuments()} and the old/removed documents surfaced in document
+     *       changes carry ONLY those projected fields — do not read other fields off them;
+     *   <li>a write acknowledgment may surface as a spurious {@code MODIFIED} change (it never
+     *       misses a real change);
+     *   <li>all listeners on the same query should use the same changesOnly setting; mixing is
+     *       unsupported — the first listener's setting wins for the shared view (a plain listener or
+     *       {@code get()} sharing a changes-only query would then observe projected documents) and a
+     *       warning is logged.
+     * </ul>
      *
      * @param changesOnly Whether the listener is changes-only.
      * @return This Builder instance to allow chaining of method calls.
@@ -200,7 +215,7 @@ public final class SnapshotListenOptions {
     return metadataChanges == that.metadataChanges
         && source == that.source
         && executor.equals(that.executor)
-        && activity.equals(that.activity)
+        && java.util.Objects.equals(activity, that.activity)
         && changesOnly == that.changesOnly;
   }
 

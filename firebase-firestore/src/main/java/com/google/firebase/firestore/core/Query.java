@@ -387,6 +387,22 @@ public final class Query {
     return memoizedNormalizedOrderBys;
   }
 
+  /**
+   * Returns the non-key fields of the normalized orderBy — the field values that determine this
+   * query's sort order (the key ordering uses the document key, not a field value). Centralizes the
+   * "which fields determine sort order" definition so callers (e.g. changes-only view projection in
+   * {@code core.View}) don't re-derive it and drift from the comparator.
+   */
+  public List<FieldPath> getNonKeyOrderByFields() {
+    List<FieldPath> fields = new ArrayList<>();
+    for (OrderBy orderBy : getNormalizedOrderBy()) {
+      if (!orderBy.getField().equals(FieldPath.KEY_PATH)) {
+        fields.add(orderBy.getField());
+      }
+    }
+    return fields;
+  }
+
   private boolean matchesPathAndCollectionGroup(Document doc) {
     ResourcePath docPath = doc.getKey().getPath();
     if (collectionGroup != null) {

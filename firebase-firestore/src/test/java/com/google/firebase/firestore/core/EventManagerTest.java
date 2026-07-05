@@ -46,6 +46,13 @@ public class EventManagerTest {
         new QueryOrPipeline.QueryWrapper(query), new ListenOptions(), (value, error) -> {});
   }
 
+  private static QueryListener queryListener(Query query, boolean changesOnly) {
+    ListenOptions options = new ListenOptions();
+    options.changesOnly = changesOnly;
+    return new QueryListener(
+        new QueryOrPipeline.QueryWrapper(query), options, (value, error) -> {});
+  }
+
   @Test
   public void testMultipleListensPerQuery() {
     Query query = Query.atPath(path("foo/bar"));
@@ -74,6 +81,20 @@ public class EventManagerTest {
             qop,
             /** shouldUnlistenToRemote= */
             true);
+  }
+
+  @Test
+  public void testMismatchedChangesOnlyListenersOnSameQueryAreTolerated() {
+    // Mixing changesOnly on one query is unsupported but must NOT crash: addQueryListener runs on
+    // the async worker, where an uncaught exception panics the client. The mismatch is logged and
+    // the first listener's setting wins for the shared view.
+    Query query = Query.atPath(path("foo/bar"));
+    SyncEngine syncSpy = mock(SyncEngine.class);
+    EventManager manager = new EventManager(syncSpy);
+
+    manager.addQueryListener(queryListener(query, /* changesOnly= */ true));
+    // Does not throw; both listeners register on the shared query.
+    manager.addQueryListener(queryListener(query, /* changesOnly= */ false));
   }
 
   @Test

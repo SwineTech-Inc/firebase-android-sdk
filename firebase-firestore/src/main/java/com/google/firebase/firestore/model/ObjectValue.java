@@ -183,13 +183,10 @@ public final class ObjectValue implements Cloneable {
    * @return The value at the path or null if it doesn't exist.
    */
   public @Nullable Value get(FieldPath fieldPath) {
-    // Small/mutated docs: buildProto() is memoized (mergedValue), so this is a cheap tree walk.
-    if (serializedMapValue == null) {
-      return extractNestedValue(buildProto(), fieldPath);
-    }
-    // Never cache the whole-tree EMPTY_PATH value — that would re-retain the full document and
-    // defeat byte-backing.
-    if (fieldPath.isEmpty()) {
+    // Direct walk when either: the doc is small/mutated (buildProto() is memoized in mergedValue),
+    // or the path is the whole-tree EMPTY_PATH (never cached — that would re-retain the full
+    // document and defeat byte-backing).
+    if (serializedMapValue == null || fieldPath.isEmpty()) {
       return extractNestedValue(buildProto(), fieldPath);
     }
     // Byte-backed docs re-parse on every buildProto(), so cache the extracted per-field Value.
@@ -449,7 +446,8 @@ public final class ObjectValue implements Cloneable {
   public ObjectValue clone() {
     ByteString bytes = serializedMapValue;
     if (bytes != null) {
-      // Share the immutable backing bytes — no inflation. The clone gets its own soft cache.
+      // Share the immutable backing bytes — no inflation. The clone starts with an empty per-field
+      // cache of its own.
       return ObjectValue.fromMapValueBytes(bytes);
     }
     return new ObjectValue(buildProto());

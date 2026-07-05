@@ -20,6 +20,7 @@ import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.EventListener;
 import com.google.firebase.firestore.ListenSource;
 import com.google.firebase.firestore.core.SyncEngine.SyncEngineCallback;
+import com.google.firebase.firestore.util.Logger;
 import com.google.firebase.firestore.util.Util;
 import io.grpc.Status;
 import java.util.ArrayList;
@@ -39,9 +40,14 @@ public final class EventManager implements SyncEngineCallback {
     private final List<QueryListener> listeners;
     private ViewSnapshot viewSnapshot;
     private int targetId;
+    // Whether this query's view is changes-only. Fixed by the first listener; all listeners on the
+    // same query must agree (enforced in addQueryListener), because the shared view is projected
+    // once and a mismatching listener would otherwise silently receive field-stripped documents.
+    private final boolean changesOnly;
 
-    QueryListenersInfo() {
+    QueryListenersInfo(boolean changesOnly) {
       listeners = new ArrayList<>();
+      this.changesOnly = changesOnly;
     }
 
     // Helper methods that checks if the query has listeners that listening to remote store
@@ -71,8 +77,11 @@ public final class EventManager implements SyncEngineCallback {
 
     /**
      * When true, this listener only observes document changes (never the full result set), allowing
-     * the query view to retain projected documents instead of full data. Must only be set for
-     * listeners that never read {@code QuerySnapshot.getDocuments()}.
+     * the query view to retain projected documents (key + version + orderBy sort fields) instead of
+     * full data. Must only be set for listeners that never read {@code QuerySnapshot.getDocuments()};
+     * old/removed documents also carry only the projected fields. All listeners on a query should
+     * agree on this flag; a mismatch is logged and the first listener's setting wins for the shared
+     * view (see {@code EventManager#addQueryListener}).
      */
     public boolean changesOnly = false;
 
@@ -120,8 +129,24 @@ public final class EventManager implements SyncEngineCallback {
     ListenerSetupAction listenerAction = ListenerSetupAction.NO_ACTION_REQUIRED;
 
     QueryListenersInfo queryInfo = queries.get(query);
+    if (queryInfo != null && queryInfo.changesOnly != queryListener.isChangesOnly()) {
+      // The view for a query is created once (by the first listener) and, when changes-only, retains
+      // projected documents; a later listener that disagrees can't change that. A plain listener (or
+      // a get(), which listens with changesOnly=false) sharing a changes-only query would then see
+      // projected (field-stripped) getDocuments(). This is unsupported usage — warn rather than
+      // throw, because addQueryListener runs on the async worker where an uncaught exception panics
+      // the client.
+      Logger.warn(
+          "EventManager",
+          "Query %s already has listeners with changesOnly=%s but a new listener requested "
+              + "changesOnly=%s; all listeners on a query should agree. The first listener's setting "
+              + "wins for the shared view, so a changes-only view will surface projected documents.",
+          query,
+          queryInfo.changesOnly,
+          queryListener.isChangesOnly());
+    }
     if (queryInfo == null) {
-      queryInfo = new QueryListenersInfo();
+      queryInfo = new QueryListenersInfo(queryListener.isChangesOnly());
       queries.put(query, queryInfo);
       listenerAction =
           queryListener.listensToRemoteStore()
