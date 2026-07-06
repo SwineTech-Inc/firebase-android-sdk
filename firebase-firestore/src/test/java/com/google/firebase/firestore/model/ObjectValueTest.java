@@ -332,7 +332,8 @@ public class ObjectValueTest {
     // Guards the make-or-break: inflating for a read must NOT drop the compact backing (otherwise
     // a large sync would pin every inflated tree). The serialized bytes survive reads; only the
     // per-field cache is populated.
-    ObjectValue byteBacked = ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
+    ObjectValue byteBacked =
+        ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
     byteBacked.get(field("a"));
     byteBacked.getFieldsMap();
     byteBacked.getFieldMask();
@@ -342,7 +343,8 @@ public class ObjectValueTest {
 
   @Test
   public void testByteBackedLeavesRegimeOnMutation() {
-    ObjectValue byteBacked = ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
+    ObjectValue byteBacked =
+        ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
     assertTrue(byteBacked.isByteBacked());
 
     byteBacked.set(field("a"), wrap(9));
@@ -372,7 +374,8 @@ public class ObjectValueTest {
     // H1 guard: a doc missing the queried field extracts to null and MUST be cached (containsKey),
     // otherwise sparse-field sorts re-parse on every comparison and re-create the sort stall. Two
     // reads of a missing field must inflate the proto only once.
-    ObjectValue byteBacked = ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
+    ObjectValue byteBacked =
+        ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
     assertTrue(byteBacked.isByteBacked());
 
     assertNull(byteBacked.get(field("missing")));
@@ -386,7 +389,8 @@ public class ObjectValueTest {
   public void testByteBackedCachesPresentFieldWithoutReparsing() {
     // Repeated reads of the same present field parse the proto once, then hit the per-field cache;
     // the document stays byte-backed (the compact backing is never dropped by a read).
-    ObjectValue byteBacked = ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
+    ObjectValue byteBacked =
+        ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
 
     assertEquals(wrap(1), byteBacked.get(field("a")));
     assertEquals(wrap(1), byteBacked.get(field("a")));
@@ -400,7 +404,8 @@ public class ObjectValueTest {
   public void testByteBackedFieldCacheClearedOnMutation() {
     // A mutation leaves the byte-backed regime and drops the per-field cache, so a subsequent read
     // returns the mutated value, not a stale cached one.
-    ObjectValue byteBacked = ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
+    ObjectValue byteBacked =
+        ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
     assertEquals(wrap(1), byteBacked.get(field("a"))); // populates the per-field cache
 
     byteBacked.set(field("a"), wrap(9));

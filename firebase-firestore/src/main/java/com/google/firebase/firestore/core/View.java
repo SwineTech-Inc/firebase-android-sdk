@@ -341,7 +341,8 @@ public class View {
       if (change.getType() != Type.REMOVED) {
         Document changed = change.getDocument();
         if (changed instanceof MutableDocument) {
-          projected = projected.add(((MutableDocument) changed).copyWithProjectedData(projectedFields));
+          projected =
+              projected.add(((MutableDocument) changed).copyWithProjectedData(projectedFields));
         } else {
           // Only MutableDocument can be projected; retain anything else as-is (defensive — every
           // Document reaching a view is a MutableDocument today).

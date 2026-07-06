@@ -130,8 +130,10 @@ public final class EventManager implements SyncEngineCallback {
 
     QueryListenersInfo queryInfo = queries.get(query);
     if (queryInfo != null && queryInfo.changesOnly != queryListener.isChangesOnly()) {
-      // The view for a query is created once (by the first listener) and, when changes-only, retains
-      // projected documents; a later listener that disagrees can't change that. A plain listener (or
+      // The view for a query is created once (by the first listener) and, when changes-only,
+      // retains
+      // projected documents; a later listener that disagrees can't change that. A plain listener
+      // (or
       // a get(), which listens with changesOnly=false) sharing a changes-only query would then see
       // projected (field-stripped) getDocuments(). This is unsupported usage — warn rather than
       // throw, because addQueryListener runs on the async worker where an uncaught exception panics
