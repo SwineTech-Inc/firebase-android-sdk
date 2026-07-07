@@ -401,6 +401,26 @@ public class ObjectValueTest {
   }
 
   @Test
+  public void testByteBackedDoesNotMemoizeWholeTree() {
+    // Make-or-break for the OOM fix: byte-backed docs must NOT memoize the inflated whole tree.
+    // buildProto()/getFieldsMap() re-inflate transiently on every call, so a large sync never pins
+    // a full inflated tree per document (each becomes GC-reclaimable immediately). A regression
+    // that memoized mergedValue would silently reintroduce the ~238 MB retention. Per-field reads
+    // ARE cached (see tests above); the whole tree is deliberately not.
+    ObjectValue byteBacked =
+        ObjectValue.fromMapValueBytes(mapValueBytes(wrapObject("a", 1, "b", 2)));
+
+    byteBacked.getFieldsMap();
+    byteBacked.getFieldsMap();
+    byteBacked.getFieldsMap();
+
+    // Three whole-tree reads => three inflations (no whole-tree memo), and it stays byte-backed.
+    assertEquals(3, byteBacked.byteBackedInflations);
+    assertTrue(byteBacked.isByteBacked());
+    assertNotNull(byteBacked.getSerializedMapValueOrNull());
+  }
+
+  @Test
   public void testByteBackedFieldCacheClearedOnMutation() {
     // A mutation leaves the byte-backed regime and drops the per-field cache, so a subsequent read
     // returns the mutated value, not a stale cached one.

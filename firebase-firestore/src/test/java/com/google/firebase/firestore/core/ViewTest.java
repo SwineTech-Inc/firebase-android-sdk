@@ -230,6 +230,38 @@ public class ViewTest {
   }
 
   @Test
+  public void testChangesOnlyIsIgnoredForLimitQueries() {
+    // changes-only projection is unsafe for limit queries (they need full data to re-order and
+    // backfill on removals), so the View must fall back to full-data even when changesOnly=true is
+    // requested. Guards the `!isPipeline() && getLimit() == null` gate in the View constructor.
+    Query query =
+        Query.atPath(ResourcePath.fromString("rooms/eros/messages"))
+            .orderBy(orderBy("sort"))
+            .limitToFirst(2);
+    View view =
+        new View(
+            new QueryOrPipeline.QueryWrapper(query),
+            DocumentKey.emptyKeySet(),
+            /* changesOnly= */ true);
+
+    MutableDocument doc1 = doc("rooms/eros/messages/1", 1, map("sort", 1L, "text", "msg1"));
+    MutableDocument doc2 = doc("rooms/eros/messages/2", 1, map("sort", 2L, "text", "msg2"));
+    applyChanges(view, doc1, doc2);
+
+    // Modify doc1 so the retained set surfaces as the next snapshot's old documents.
+    MutableDocument doc1Updated =
+        doc("rooms/eros/messages/1", 2, map("sort", 1L, "text", "updated"));
+    ViewSnapshot snapshot =
+        view.applyChanges(view.computeDocChanges(docUpdates(doc1Updated))).getSnapshot();
+
+    // Fallback engaged: the retained doc keeps ALL fields (a changes-only view would strip "text").
+    Document retained = snapshot.getOldDocuments().getDocument(doc2.getKey());
+    assertNotNull(retained);
+    assertEquals(wrap(2L), retained.getField(field("sort")));
+    assertEquals(wrap("msg2"), retained.getField(field("text")));
+  }
+
+  @Test
   public void testChangesOnlyViewEmitsRemovedChangesForCrossDeviceDeletes() {
     Query query =
         Query.atPath(ResourcePath.fromString("rooms/eros/messages")).orderBy(orderBy("sort"));
