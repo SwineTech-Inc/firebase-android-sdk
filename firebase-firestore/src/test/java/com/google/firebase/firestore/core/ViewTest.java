@@ -155,6 +155,81 @@ public class ViewTest {
   }
 
   @Test
+  public void testChangesOnlyViewReordersWhenSortValueChanges() {
+    Query query =
+        Query.atPath(ResourcePath.fromString("rooms/eros/messages")).orderBy(orderBy("sort"));
+    View view =
+        new View(
+            new QueryOrPipeline.QueryWrapper(query),
+            DocumentKey.emptyKeySet(),
+            /* changesOnly= */ true);
+
+    MutableDocument doc1 = doc("rooms/eros/messages/1", 1, map("sort", 1L, "text", "msg1"));
+    MutableDocument doc2 = doc("rooms/eros/messages/2", 1, map("sort", 2L, "text", "msg2"));
+    applyChanges(view, doc1, doc2); // ordered [doc1(sort=1), doc2(sort=2)]
+
+    // doc1's sort value jumps past doc2; the projected retained set must re-order to [doc2, doc1].
+    // This only works if the projection carries the NEW sort value — a stale projected sort key
+    // would leave the view mis-ordered (the whole reason copyWithProjectedData retains sort
+    // fields).
+    MutableDocument doc1Reordered =
+        doc("rooms/eros/messages/1", 2, map("sort", 3L, "text", "msg1-updated"));
+    ViewSnapshot snapshot =
+        view.applyChanges(view.computeDocChanges(docUpdates(doc1Reordered))).getSnapshot();
+
+    assertEquals(
+        asList(DocumentViewChange.create(Type.MODIFIED, doc1Reordered)), snapshot.getChanges());
+    // The delivered snapshot carries FULL data, re-ordered to [doc2, doc1] by the new sort value.
+    assertEquals(doc2.getKey(), snapshot.getDocuments().toList().get(0).getKey());
+    assertEquals(doc1Reordered.getKey(), snapshot.getDocuments().toList().get(1).getKey());
+
+    // The RETAINED set (projected) must carry doc1's NEW sort key so later diffs stay ordered — a
+    // stale projected sort would mis-order the view. It surfaces as the next snapshot's old docs.
+    MutableDocument doc2Touched =
+        doc("rooms/eros/messages/2", 2, map("sort", 2L, "text", "msg2-updated"));
+    ViewSnapshot next =
+        view.applyChanges(view.computeDocChanges(docUpdates(doc2Touched))).getSnapshot();
+    assertEquals(doc2.getKey(), next.getOldDocuments().toList().get(0).getKey());
+    assertEquals(doc1Reordered.getKey(), next.getOldDocuments().toList().get(1).getKey());
+    Document retainedDoc1 = next.getOldDocuments().getDocument(doc1Reordered.getKey());
+    assertNotNull(retainedDoc1);
+    assertEquals(wrap(3L), retainedDoc1.getField(field("sort")));
+    assertNull(retainedDoc1.getField(field("text")));
+  }
+
+  @Test
+  public void testChangesOnlyViewNeverMissesWriteAckOrDataChange() {
+    Query query =
+        Query.atPath(ResourcePath.fromString("rooms/eros/messages")).orderBy(orderBy("sort"));
+    View view =
+        new View(
+            new QueryOrPipeline.QueryWrapper(query),
+            DocumentKey.emptyKeySet(),
+            /* changesOnly= */ true);
+
+    MutableDocument synced = doc("rooms/eros/messages/1", 1, map("sort", 1L, "text", "a"));
+    applyChanges(view, synced);
+
+    // A pending local write (same version, now unacked) must still surface as a change:
+    // changes-only
+    // equality is version-only and treats a pending-write transition as not-equal, so it can only
+    // over-report, never silently drop the write.
+    MutableDocument pending =
+        doc("rooms/eros/messages/1", 1, map("sort", 1L, "text", "a")).setHasLocalMutations();
+    ViewSnapshot afterWrite =
+        view.applyChanges(view.computeDocChanges(docUpdates(pending))).getSnapshot();
+    assertFalse(afterWrite.getChanges().isEmpty());
+
+    // A genuine data change at a new version is delivered as MODIFIED with full data — never
+    // missed.
+    MutableDocument changed = doc("rooms/eros/messages/1", 2, map("sort", 1L, "text", "b"));
+    ViewSnapshot afterChange =
+        view.applyChanges(view.computeDocChanges(docUpdates(changed))).getSnapshot();
+    assertEquals(
+        asList(DocumentViewChange.create(Type.MODIFIED, changed)), afterChange.getChanges());
+  }
+
+  @Test
   public void testChangesOnlyViewEmitsRemovedChangesForCrossDeviceDeletes() {
     Query query =
         Query.atPath(ResourcePath.fromString("rooms/eros/messages")).orderBy(orderBy("sort"));

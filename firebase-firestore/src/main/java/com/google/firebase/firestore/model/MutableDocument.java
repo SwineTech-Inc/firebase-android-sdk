@@ -68,6 +68,10 @@ public final class MutableDocument implements Document {
   private ObjectValue value;
   private DocumentState documentState;
 
+  // True when this document's data was reduced to a projection (see copyWithProjectedData); such a
+  // document must never be persisted or read for fields outside the projection.
+  private boolean projectedData;
+
   private MutableDocument(DocumentKey key) {
     this.key = key;
     this.readTime = SnapshotVersion.NONE;
@@ -205,6 +209,15 @@ public final class MutableDocument implements Document {
     return hasLocalMutations() || hasCommittedMutations();
   }
 
+  /**
+   * Whether this document's data was reduced to a projection (key + version + sort fields) by
+   * {@link #copyWithProjectedData}. A projected document must never be persisted or read for its
+   * full fields.
+   */
+  public boolean isProjected() {
+    return projectedData;
+  }
+
   @Override
   public ObjectValue getData() {
     return value;
@@ -238,7 +251,10 @@ public final class MutableDocument implements Document {
   @Override
   @NonNull
   public MutableDocument mutableCopy() {
-    return new MutableDocument(key, documentType, version, readTime, value.clone(), documentState);
+    MutableDocument copy =
+        new MutableDocument(key, documentType, version, readTime, value.clone(), documentState);
+    copy.projectedData = projectedData;
+    return copy;
   }
 
   /**
@@ -260,7 +276,10 @@ public final class MutableDocument implements Document {
         projected.set(field, fieldValue);
       }
     }
-    return new MutableDocument(key, documentType, version, readTime, projected, documentState);
+    MutableDocument projectedDoc =
+        new MutableDocument(key, documentType, version, readTime, projected, documentState);
+    projectedDoc.projectedData = true;
+    return projectedDoc;
   }
 
   @Override

@@ -91,6 +91,9 @@ public final class LocalSerializer {
    * that it preserves the updateTime, which is considered an output only value by the server.
    */
   private com.google.firestore.v1.Document encodeDocument(Document document) {
+    hardAssert(
+        !(document instanceof MutableDocument) || !((MutableDocument) document).isProjected(),
+        "Cannot persist a projected (changes-only) document; its data was stripped to a projection.");
     com.google.firestore.v1.Document.Builder builder =
         com.google.firestore.v1.Document.newBuilder();
     builder.setName(rpcSerializer.encodeKey(document.getKey()));

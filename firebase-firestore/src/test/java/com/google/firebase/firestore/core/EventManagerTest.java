@@ -77,12 +77,32 @@ public class EventManagerTest {
             /** shouldListenToRemote= */
             eq(true),
             /** changesOnly= */
-            anyBoolean());
+            eq(false));
     verify(syncSpy, times(1))
         .stopListening(
             qop,
             /** shouldUnlistenToRemote= */
             true);
+  }
+
+  @Test
+  public void testChangesOnlyFlagPropagatesToSyncEngineListen() {
+    Query query = Query.atPath(path("foo/bar"));
+    QueryOrPipeline qop = new QueryOrPipeline.QueryWrapper(query);
+    SyncEngine syncSpy = mock(SyncEngine.class);
+    EventManager manager = new EventManager(syncSpy);
+
+    manager.addQueryListener(queryListener(query, /* changesOnly= */ true));
+
+    // The changesOnly bit must reach SyncEngine.listen — pinned with eq(true) so a dropped or
+    // inverted flag fails the test (previously this was matched with anyBoolean()).
+    verify(syncSpy, times(1))
+        .listen(
+            eq(qop),
+            /** shouldListenToRemote= */
+            eq(true),
+            /** changesOnly= */
+            eq(true));
   }
 
   @Test

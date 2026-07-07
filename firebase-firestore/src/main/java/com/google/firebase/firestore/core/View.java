@@ -318,13 +318,25 @@ public class View {
    * (never miss one) — e.g. a write acknowledgment surfaces as MODIFIED rather than METADATA — and
    * write-acknowledgment transitions are still reconciled by {@link #shouldWaitForSyncedDocument}.
    *
-   * <p>Full-data views keep the exact upstream data comparison.
+   * <p>Full-data views apply the same synced-same-version fast path as a behavior-identical cheap
+   * pre-check, then fall back to the exact upstream data comparison.
    */
   private boolean documentsEqual(Document oldDoc, Document newDoc) {
     if (changesOnly) {
       return !oldDoc.hasPendingWrites()
           && !newDoc.hasPendingWrites()
           && oldDoc.getVersion().equals(newDoc.getVersion());
+    }
+    // Fast path (mirrors the changes-only branch above): two fully-synced docs at the same version
+    // have identical data — LocalStore keeps the first synced value seen at a version and the
+    // server advances the version on every write — so skip re-inflating both protos. This matters
+    // now that byte-backed docs re-inflate on every getData() (they intentionally don't memoize the
+    // tree). Behavior-identical to the compare below, which still runs whenever a doc has pending
+    // writes or the versions differ.
+    if (!oldDoc.hasPendingWrites()
+        && !newDoc.hasPendingWrites()
+        && oldDoc.getVersion().equals(newDoc.getVersion())) {
+      return true;
     }
     return oldDoc.getData().equals(newDoc.getData());
   }
