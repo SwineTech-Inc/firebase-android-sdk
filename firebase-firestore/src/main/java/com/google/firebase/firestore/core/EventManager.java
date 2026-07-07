@@ -18,9 +18,9 @@ import static com.google.firebase.firestore.util.Assert.hardAssert;
 
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.EventListener;
+import com.google.firebase.firestore.FirebaseFirestoreException;
 import com.google.firebase.firestore.ListenSource;
 import com.google.firebase.firestore.core.SyncEngine.SyncEngineCallback;
-import com.google.firebase.firestore.util.Logger;
 import com.google.firebase.firestore.util.Util;
 import io.grpc.Status;
 import java.util.ArrayList;
@@ -41,8 +41,10 @@ public final class EventManager implements SyncEngineCallback {
     private ViewSnapshot viewSnapshot;
     private int targetId;
     // Whether this query's view is changes-only. Fixed by the first listener; all listeners on the
-    // same query must agree (enforced in addQueryListener), because the shared view is projected
-    // once and a mismatching listener would otherwise silently receive field-stripped documents.
+    // same query must agree on it (enforced in addQueryListener, which rejects a mismatched
+    // listener with FAILED_PRECONDITION). The shared view is projected once, so a full-data joiner
+    // would see field-stripped documents while a changes-only joiner would silently retain full
+    // data (defeating the projection).
     private final boolean changesOnly;
 
     QueryListenersInfo(boolean changesOnly) {
@@ -79,9 +81,10 @@ public final class EventManager implements SyncEngineCallback {
      * When true, this listener only observes document changes (never the full result set), allowing
      * the query view to retain projected documents (key + version + orderBy sort fields) instead of
      * full data. Must only be set for listeners that never read {@code QuerySnapshot.getDocuments()};
-     * old/removed documents also carry only the projected fields. All listeners on a query should
-     * agree on this flag; a mismatch is logged and the first listener's setting wins for the shared
-     * view (see {@code EventManager#addQueryListener}).
+     * old/removed documents also carry only the projected fields. All listeners on a query must
+     * agree on this flag; the first listener fixes the shared view's mode and a mismatched later
+     * listener is rejected via {@code onError} with {@code FAILED_PRECONDITION} (see {@code
+     * EventManager#addQueryListener}).
      */
     public boolean changesOnly = false;
 
@@ -130,22 +133,26 @@ public final class EventManager implements SyncEngineCallback {
 
     QueryListenersInfo queryInfo = queries.get(query);
     if (queryInfo != null && queryInfo.changesOnly != queryListener.isChangesOnly()) {
-      // The view for a query is created once (by the first listener) and, when changes-only,
-      // retains
-      // projected documents; a later listener that disagrees can't change that. A plain listener
-      // (or
-      // a get(), which listens with changesOnly=false) sharing a changes-only query would then see
-      // projected (field-stripped) getDocuments(). This is unsupported usage — warn rather than
-      // throw, because addQueryListener runs on the async worker where an uncaught exception panics
-      // the client.
-      Logger.warn(
-          "EventManager",
-          "Query %s already has listeners with changesOnly=%s but a new listener requested "
-              + "changesOnly=%s; all listeners on a query should agree. The first listener's setting "
-              + "wins for the shared view, so a changes-only view will surface projected documents.",
-          query,
-          queryInfo.changesOnly,
-          queryListener.isChangesOnly());
+      // A query's view is created once by the first listener and its projection mode (changesOnly)
+      // is then fixed. A later listener that disagrees can't be satisfied by the shared view, and
+      // neither direction is silent-safe:
+      //   - changes-only view + full-data joiner -> the joiner's getDocuments() would return
+      //     field-stripped documents (silent DATA LOSS);
+      //   - full view + changes-only joiner -> the joiner would retain full data for the whole
+      //     result set, defeating the projection (silent OOM REGRESSION on large queries).
+      // Reject the mismatched joiner loudly instead. onError is safe on the worker; a throw here
+      // would panic the AsyncQueue. Existing (matching) listeners are unaffected.
+      queryListener.onError(
+          new FirebaseFirestoreException(
+              "Listener for query "
+                  + query
+                  + " requests changesOnly="
+                  + queryListener.isChangesOnly()
+                  + ", but this query already has listeners with changesOnly="
+                  + queryInfo.changesOnly
+                  + "; all listeners on a query must use the same changesOnly setting.",
+              FirebaseFirestoreException.Code.FAILED_PRECONDITION));
+      return queryInfo.targetId;
     }
     if (queryInfo == null) {
       queryInfo = new QueryListenersInfo(queryListener.isChangesOnly());

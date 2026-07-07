@@ -311,12 +311,12 @@ public class View {
    *
    * <p>In changes-only mode the retained {@code oldDoc} is a projected handle without full data, so
    * data cannot be compared directly. Instead the documents are treated as equal only when both are
-   * fully synced (no pending writes) and share the same version: {@code LocalStore} keeps the first
-   * synced value seen at a version and the server advances the version on every write, so a synced
-   * doc can never be replaced by a different synced doc at the same version. This can only
-   * over-report a modification (never miss one) — e.g. a write acknowledgment surfaces as MODIFIED
-   * rather than METADATA — and write-acknowledgment transitions are still reconciled by {@link
-   * #shouldWaitForSyncedDocument}.
+   * fully synced (no pending writes) and share the same version. This relies on two non-local
+   * Firestore invariants: the server advances the version on every write, and {@code LocalStore}
+   * keeps the first synced value seen at a version — so a synced doc is never replaced by a
+   * different synced doc at the same version. Given those, this can only over-report a modification
+   * (never miss one) — e.g. a write acknowledgment surfaces as MODIFIED rather than METADATA — and
+   * write-acknowledgment transitions are still reconciled by {@link #shouldWaitForSyncedDocument}.
    *
    * <p>Full-data views keep the exact upstream data comparison.
    */

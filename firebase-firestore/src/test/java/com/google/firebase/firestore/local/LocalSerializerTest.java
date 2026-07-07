@@ -330,9 +330,10 @@ public final class LocalSerializerTest {
 
   @Test
   public void testEncodesByteBackedFoundDocument() {
-    // A large document is held byte-backed by ObjectValue; encodeDocument must persist it from its
-    // backing bytes (via the byte-preserving path, without inflating/retaining the tree) and
-    // round-trip losslessly.
+    // A large document is held byte-backed by ObjectValue. encodeDocument reads it via
+    // getData().getFieldsMap(), which inflates the byte-backed proto transiently (buildProto() does
+    // not memoize it), so no inflated tree is retained during a large sync. Verify it round-trips
+    // losslessly.
     char[] filler = new char[2048];
     java.util.Arrays.fill(filler, 'x');
     MutableDocument document = doc("some/path", 42, map("foo", "bar", "big", new String(filler)));

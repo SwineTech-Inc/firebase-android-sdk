@@ -45,8 +45,10 @@ public final class ObjectValue implements Cloneable {
    * This member MAY be READ concurrently from multiple threads without acquiring any particular
    * locks; however, UPDATING it MUST have the `lock` lock held.
    * <p>
-   * Internal Invariant: Exactly one of `mergedValue` and `partialValue` must be null, with the
-   * other being non-null.
+   * Internal Invariant: exactly one of `mergedValue`, `partialValue`, and `serializedMapValue` is
+   * non-null (the other two null) and backs this object. `overlayMap` is non-empty only while
+   * `partialValue` backs it; `byteBackedFieldCache` is populated only while `serializedMapValue`
+   * backs it.
    */
   @Nullable private volatile Value mergedValue;
 
@@ -62,10 +64,10 @@ public final class ObjectValue implements Cloneable {
    * #buildProto()} inflates byte-backed docs transiently (no whole-tree memo, to bound peak memory
    * during a large sync), repeated single-field reads — the View's orderBy comparator reads the
    * sort field O(n log n) times while ordering the result set, plus filters and projection — would
-   * otherwise re-parse the whole proto each time. Only the small extracted Values are kept (the
-   * whole tree stays transient), so this is far smaller than a whole-doc cache and does not
-   * reintroduce the accumulation a soft-referenced whole-tree cache caused. Guarded by {@link
-   * #lock}; dropped when the document leaves the byte-backed regime (mutation).
+   * otherwise re-parse the whole proto each time. Only the accessed fields are cached, not the whole
+   * inflated tree (a field that is itself a map or array caches that subtree, so the cache is
+   * bounded by what is actually read rather than by the full document). Guarded by {@link #lock};
+   * dropped when the document leaves the byte-backed regime (mutation).
    */
   @GuardedBy("lock")
   @Nullable
@@ -75,9 +77,11 @@ public final class ObjectValue implements Cloneable {
   @VisibleForTesting int byteBackedInflations;
 
   /**
-   * Documents whose serialized MapValue exceeds this size are held byte-backed to bound peak memory
-   * (for example, during a large initial sync). Smaller documents keep the inflated {@link
-   * #mergedValue}, so normal small-document usage is unaffected.
+   * When an ObjectValue is built from a map or serialized bytes ({@link #fromMap} / {@link
+   * #fromMapValueBytes}) and its serialized MapValue exceeds this size, it is held byte-backed to
+   * bound peak memory (for example, during a large initial sync). Smaller documents — and any
+   * ObjectValue built directly from a {@link Value} — keep the inflated {@link #mergedValue}, so
+   * normal small-document usage is unaffected.
    */
   private static final int FAT_DOCUMENT_THRESHOLD_BYTES = 256;
 
@@ -85,8 +89,10 @@ public final class ObjectValue implements Cloneable {
    * The immutable Value proto for this object. Local mutations are stored in `overlayMap` and only
    * applied when {@link #buildProto()} is invoked.
    * <p>
-   * Internal Invariant: Exactly one of `mergedValue` and `partialValue` must be null, with the
-   * other being non-null.
+   * Internal Invariant: exactly one of `mergedValue`, `partialValue`, and `serializedMapValue` is
+   * non-null (the other two null) and backs this object. `overlayMap` is non-empty only while
+   * `partialValue` backs it; `byteBackedFieldCache` is populated only while `serializedMapValue`
+   * backs it.
    */
   @GuardedBy("lock")
   private Value partialValue;
@@ -137,9 +143,12 @@ public final class ObjectValue implements Cloneable {
   }
 
   /**
-   * Returns the backing serialized {@link MapValue} bytes if this ObjectValue is byte-backed, or
-   * null otherwise. Lets callers (for example, persistence) avoid inflating the full proto tree.
+   * Test-only: returns the backing serialized {@link MapValue} bytes if this ObjectValue is
+   * byte-backed, or null otherwise. Used by tests to assert the byte-backed regime and that {@link
+   * #clone()} shares the same bytes. Not used in production — {@code LocalSerializer.encodeDocument}
+   * inflates transiently via {@link #getFieldsMap()} rather than persisting from these bytes.
    */
+  @VisibleForTesting
   public @Nullable ByteString getSerializedMapValueOrNull() {
     return serializedMapValue;
   }

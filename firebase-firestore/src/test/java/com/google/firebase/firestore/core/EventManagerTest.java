@@ -16,6 +16,7 @@ package com.google.firebase.firestore.core;
 
 import static com.google.firebase.firestore.testutil.TestUtil.path;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
@@ -27,6 +28,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.google.firebase.firestore.FirebaseFirestoreException;
 import com.google.firebase.firestore.core.EventManager.ListenOptions;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -84,17 +86,43 @@ public class EventManagerTest {
   }
 
   @Test
-  public void testMismatchedChangesOnlyListenersOnSameQueryAreTolerated() {
-    // Mixing changesOnly on one query is unsupported but must NOT crash: addQueryListener runs on
-    // the async worker, where an uncaught exception panics the client. The mismatch is logged and
-    // the first listener's setting wins for the shared view.
-    Query query = Query.atPath(path("foo/bar"));
+  public void testMismatchedChangesOnlyListenerOnSameQueryIsRejected() {
+    // A query's view mode (changesOnly) is fixed by the first listener. A later listener that
+    // disagrees can't be satisfied by the shared view — a full-data joiner would get field-stripped
+    // documents (data loss) and a changes-only joiner would silently retain full data (defeating
+    // the projection -> OOM). Both directions are rejected via onError(FAILED_PRECONDITION), which
+    // is worker-safe (a throw would panic the AsyncQueue).
     SyncEngine syncSpy = mock(SyncEngine.class);
     EventManager manager = new EventManager(syncSpy);
 
-    manager.addQueryListener(queryListener(query, /* changesOnly= */ true));
-    // Does not throw; both listeners register on the shared query.
-    manager.addQueryListener(queryListener(query, /* changesOnly= */ false));
+    // Direction 1: changes-only view exists, a full-data listener joins -> rejected.
+    Query q1 = Query.atPath(path("foo/bar"));
+    manager.addQueryListener(queryListener(q1, /* changesOnly= */ true));
+    FirebaseFirestoreException[] fullJoinerError = new FirebaseFirestoreException[1];
+    ListenOptions fullOptions = new ListenOptions();
+    fullOptions.changesOnly = false;
+    manager.addQueryListener(
+        new QueryListener(
+            new QueryOrPipeline.QueryWrapper(q1),
+            fullOptions,
+            (value, error) -> fullJoinerError[0] = error));
+    assertNotNull(fullJoinerError[0]);
+    assertEquals(FirebaseFirestoreException.Code.FAILED_PRECONDITION, fullJoinerError[0].getCode());
+
+    // Direction 2: full view exists, a changes-only listener joins -> also rejected (OOM guard).
+    Query q2 = Query.atPath(path("baz/qux"));
+    manager.addQueryListener(queryListener(q2, /* changesOnly= */ false));
+    FirebaseFirestoreException[] changesOnlyJoinerError = new FirebaseFirestoreException[1];
+    ListenOptions changesOnlyOptions = new ListenOptions();
+    changesOnlyOptions.changesOnly = true;
+    manager.addQueryListener(
+        new QueryListener(
+            new QueryOrPipeline.QueryWrapper(q2),
+            changesOnlyOptions,
+            (value, error) -> changesOnlyJoinerError[0] = error));
+    assertNotNull(changesOnlyJoinerError[0]);
+    assertEquals(
+        FirebaseFirestoreException.Code.FAILED_PRECONDITION, changesOnlyJoinerError[0].getCode());
   }
 
   @Test

@@ -95,8 +95,9 @@ public final class SnapshotListenOptions {
   /**
    * Returns whether this listener only observes document changes and never reads the full result
    * set. When true, the query view may retain projected documents instead of full data to reduce
-   * memory. See {@link Builder#setChangesOnly(boolean)} for the full contract (projected-only
-   * {@code getDocuments()} / removed documents, possible spurious {@code MODIFIED} on write-ack).
+   * memory. See {@link Builder#setChangesOnly(boolean)} for the full contract (carried-over and
+   * removed documents may expose only the projected fields; possible spurious {@code MODIFIED} on
+   * write-ack).
    *
    * @return Whether the listener is changes-only.
    */
@@ -176,14 +177,16 @@ public final class SnapshotListenOptions {
      * version, and the query's orderBy sort fields, so:
      *
      * <ul>
-     *   <li>{@code QuerySnapshot.getDocuments()} and the old/removed documents surfaced in document
-     *       changes carry ONLY those projected fields — do not read other fields off them;
+     *   <li>documents carried over unchanged in {@code QuerySnapshot.getDocuments()}, and the
+     *       old/removed documents surfaced in document changes, may be missing every field except
+     *       the projected ones — do not rely on other fields being present (freshly added/modified
+     *       documents still carry full data);
      *   <li>a write acknowledgment may surface as a spurious {@code MODIFIED} change (it never
      *       misses a real change);
-     *   <li>all listeners on the same query should use the same changesOnly setting; mixing is
-     *       unsupported — the first listener's setting wins for the shared view (a plain listener or
-     *       {@code get()} sharing a changes-only query would then observe projected documents) and a
-     *       warning is logged.
+     *   <li>all listeners on the same query must use the same changesOnly setting; the first
+     *       listener fixes the shared view's mode and a mismatched later listener (including a
+     *       {@code get()}, which reads full data) is rejected via {@code onError} with {@code
+     *       FAILED_PRECONDITION}.
      * </ul>
      *
      * @param changesOnly Whether the listener is changes-only.
