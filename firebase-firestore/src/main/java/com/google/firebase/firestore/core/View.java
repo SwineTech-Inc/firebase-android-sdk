@@ -328,11 +328,17 @@ public class View {
           && oldDoc.getVersion().equals(newDoc.getVersion());
     }
     // Fast path (mirrors the changes-only branch above): two fully-synced docs at the same version
-    // have identical data — LocalStore keeps the first synced value seen at a version and the
-    // server advances the version on every write — so skip re-inflating both protos. This matters
-    // now that byte-backed docs re-inflate on every getData() (they intentionally don't memoize the
-    // tree). Behavior-identical to the compare below, which still runs whenever a doc has pending
-    // writes or the versions differ.
+    // have identical data. The server advances the version on every write, and LocalStore only
+    // overwrites a synced doc at a given version when the existing doc has pending writes (enforced
+    // in LocalStore.populateDocumentChanges, for both the Watch and applyBundledDocuments paths),
+    // so
+    // a synced doc can never be replaced by different data at the same version. Skipping the
+    // compare
+    // here therefore only ever over-reports (never misses) a MODIFIED. This matters now that
+    // byte-backed docs re-inflate on every getData() (they intentionally don't memoize the tree).
+    // Behavior-equivalent to the exact compare below (not byte-identical to stock), which still
+    // runs
+    // whenever a doc has pending writes or the versions differ.
     if (!oldDoc.hasPendingWrites()
         && !newDoc.hasPendingWrites()
         && oldDoc.getVersion().equals(newDoc.getVersion())) {
