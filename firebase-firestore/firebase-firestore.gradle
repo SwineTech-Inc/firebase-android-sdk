@@ -227,3 +227,20 @@ gradle.projectsEvaluated {
         options.compilerArgs << "-Xlint:deprecation" // << "-Werror"
     }
 }
+
+// SwineTech SP30-9894: the firebase-library publication builds the pom `from(component)`, which — with
+// testFixtures enabled (upstream #8525) — leaks the test-fixtures deps into the published pom as runtime
+// (truth/junit/mockito/jackson). Strip them so the vendored pom matches stock 26.6.0 + our protobuf pin.
+afterEvaluate {
+    publishing.publications.withType(MavenPublication).configureEach { publication ->
+        publication.pom.withXml {
+            def deps = asNode().dependencies
+            if (deps && deps.size() > 0) {
+                deps[0].dependency.findAll { dep ->
+                    dep.groupId.text() in ['com.google.truth', 'junit', 'org.mockito', 'com.fasterxml.jackson.core']
+                }.each { dep -> dep.parent().remove(dep) }
+            }
+        }
+    }
+}
+
