@@ -167,6 +167,10 @@ dependencies {
     implementation libs.grpc.okhttp
     implementation libs.grpc.protobuf.lite
     implementation libs.grpc.stub
+    // SwineTech SP30-9894: pin protobuf-javalite to the patched 3.25.5 (GHSA-735f-pc8j-v9w8, High).
+    // grpc-protobuf-lite above otherwise pulls it transitively at 3.25.1; declaring it directly (depth 1)
+    // makes the published pom carry 3.25.5, so Gradle and osv-scanner both resolve the patched version.
+    implementation 'com.google.protobuf:protobuf-javalite:3.25.5'
     implementation libs.kotlin.stdlib
     implementation libs.kotlinx.coroutines.core
     implementation 'com.google.re2j:re2j:1.6'
