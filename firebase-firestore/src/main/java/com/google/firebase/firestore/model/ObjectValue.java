@@ -14,14 +14,18 @@
 
 package com.google.firebase.firestore.model;
 
+import static com.google.firebase.firestore.util.Assert.fail;
 import static com.google.firebase.firestore.util.Assert.hardAssert;
 
 import androidx.annotation.GuardedBy;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 import com.google.firebase.firestore.model.mutation.FieldMask;
 import com.google.firestore.v1.MapValue;
 import com.google.firestore.v1.Value;
+import com.google.protobuf.ByteString;
+import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -47,6 +51,36 @@ public final class ObjectValue implements Cloneable {
   @Nullable private volatile Value mergedValue;
 
   /**
+   * Serialized {@link MapValue} bytes backing a "fat" document. When non-null this is the durable
+   * source of truth and the document is inflated transiently on demand (see {@link #buildProto()}).
+   * Cleared when the document is mutated (it leaves the byte-backed regime).
+   */
+  @Nullable private volatile ByteString serializedMapValue;
+
+  /**
+   * Cache of individually-extracted field {@link Value}s for a byte-backed document. Because {@link
+   * #buildProto()} inflates byte-backed docs transiently (no whole-tree memo, to bound peak memory
+   * during a large sync), repeated single-field reads — the View's orderBy comparator reads the
+   * sort field O(n log n) times while ordering the result set, plus filters and projection — would
+   * otherwise re-parse the whole proto each time. Only the small extracted Values are kept (the
+   * whole tree stays transient), so this is far smaller than a whole-doc cache and does not
+   * reintroduce the accumulation a soft-referenced whole-tree cache caused. Guarded by {@link
+   * #lock}; dropped when the document leaves the byte-backed regime (mutation).
+   */
+  @GuardedBy("lock")
+  @Nullable private Map<FieldPath, Value> byteBackedFieldCache;
+
+  /** Test-only: counts how many times this document has been inflated from its byte backing. */
+  @VisibleForTesting int byteBackedInflations;
+
+  /**
+   * Documents whose serialized MapValue exceeds this size are held byte-backed to bound peak memory
+   * (for example, during a large initial sync). Smaller documents keep the inflated {@link
+   * #mergedValue}, so normal small-document usage is unaffected.
+   */
+  private static final int FAT_DOCUMENT_THRESHOLD_BYTES = 256;
+
+  /**
    * The immutable Value proto for this object. Local mutations are stored in `overlayMap` and only
    * applied when {@link #buildProto()} is invoked.
    * <p>
@@ -65,7 +99,24 @@ public final class ObjectValue implements Cloneable {
   private final Map<String, Object> overlayMap = new HashMap<>();
 
   public static ObjectValue fromMap(Map<String, Value> value) {
-    return new ObjectValue(Values.encodeValue(value));
+    MapValue mapValue = MapValue.newBuilder().putAllFields(value).build();
+    if (mapValue.getSerializedSize() > FAT_DOCUMENT_THRESHOLD_BYTES) {
+      // Fat document: retain only the compact bytes and inflate transiently on demand, so pure
+      // accumulation (before any field access) stays at ~bytes rather than a full inflated tree per
+      // document.
+      return new ObjectValue(mapValue.toByteString());
+    }
+    return new ObjectValue(Value.newBuilder().setMapValue(mapValue).build());
+  }
+
+  /** Creates a byte-backed ObjectValue from the serialized bytes of its {@link MapValue}. */
+  public static ObjectValue fromMapValueBytes(ByteString serializedMapValue) {
+    return new ObjectValue(serializedMapValue);
+  }
+
+  private ObjectValue(ByteString serializedMapValue) {
+    // `mergedValue`/`partialValue` intentionally left null; `serializedMapValue` is the backing.
+    this.serializedMapValue = serializedMapValue;
   }
 
   public ObjectValue(Value value) {
@@ -82,6 +133,19 @@ public final class ObjectValue implements Cloneable {
 
   public Map<String, Value> getFieldsMap() {
     return buildProto().getMapValue().getFieldsMap();
+  }
+
+  /**
+   * Returns the backing serialized {@link MapValue} bytes if this ObjectValue is byte-backed, or
+   * null otherwise. Lets callers (for example, persistence) avoid inflating the full proto tree.
+   */
+  public @Nullable ByteString getSerializedMapValueOrNull() {
+    return serializedMapValue;
+  }
+
+  @VisibleForTesting
+  boolean isByteBacked() {
+    return serializedMapValue != null;
   }
 
   /** Recursively extracts the FieldPaths that are set in this ObjectValue. */
@@ -119,7 +183,35 @@ public final class ObjectValue implements Cloneable {
    * @return The value at the path or null if it doesn't exist.
    */
   public @Nullable Value get(FieldPath fieldPath) {
-    return extractNestedValue(buildProto(), fieldPath);
+    // Small/mutated docs: buildProto() is memoized (mergedValue), so this is a cheap tree walk.
+    if (serializedMapValue == null) {
+      return extractNestedValue(buildProto(), fieldPath);
+    }
+    // Never cache the whole-tree EMPTY_PATH value — that would re-retain the full document and
+    // defeat byte-backing.
+    if (fieldPath.isEmpty()) {
+      return extractNestedValue(buildProto(), fieldPath);
+    }
+    // Byte-backed docs re-parse on every buildProto(), so cache the extracted per-field Value.
+    // This keeps repeated single-field reads (orderBy comparator, filters, projection) at one parse
+    // per doc while the full inflation stays transient.
+    synchronized (lock) {
+      // A concurrent mutation may have left the byte-backed regime.
+      if (serializedMapValue == null) {
+        return extractNestedValue(buildProto(), fieldPath);
+      }
+      // containsKey (not != null): a missing field extracts to null and MUST be cached, otherwise
+      // sparse-field docs would re-parse on every comparison and re-create the sort stall.
+      if (byteBackedFieldCache != null && byteBackedFieldCache.containsKey(fieldPath)) {
+        return byteBackedFieldCache.get(fieldPath);
+      }
+      Value extracted = extractNestedValue(buildProto(), fieldPath);
+      if (byteBackedFieldCache == null) {
+        byteBackedFieldCache = new HashMap<>();
+      }
+      byteBackedFieldCache.put(fieldPath, extracted);
+      return extracted;
+    }
   }
 
   @Nullable
@@ -149,32 +241,58 @@ public final class ObjectValue implements Cloneable {
     // Use double-checked locking to avoid acquiring a lock in the cases where the memoized result
     // has already been calculated (https://en.wikipedia.org/wiki/Double-checked_locking).
     Value value = this.mergedValue;
+    if (value != null) {
+      return value;
+    }
 
-    if (value == null) {
-      synchronized (lock) {
-        value = mergedValue;
-        if (value == null) {
-          assert (partialValue != null);
-          if (overlayMap.isEmpty()) {
-            value = partialValue;
-          } else {
-            MapValue mergedResult = applyOverlay(partialValue, FieldPath.EMPTY_PATH, overlayMap);
-            if (mergedResult == null) {
-              value = partialValue;
-            } else {
-              value = Value.newBuilder().setMapValue(mergedResult).build();
-            }
-          }
+    synchronized (lock) {
+      value = mergedValue;
+      if (value != null) {
+        return value;
+      }
 
-          assert (value != null);
-          mergedValue = value;
-          partialValue = null;
-          overlayMap.clear();
+      ByteString bytes = serializedMapValue;
+      if (bytes != null) {
+        // Byte-backed document (mutations clear `serializedMapValue`, so `overlayMap` is empty
+        // here). Inflate transiently and do NOT memoize the whole tree: it becomes unreachable
+        // again once the caller finishes with it, so the GC reclaims it continuously instead of the
+        // whole result set piling up. Per-field reads are cached in `byteBackedFieldCache` instead.
+        byteBackedInflations++;
+        return inflate(bytes);
+      }
+
+      assert (partialValue != null);
+      if (overlayMap.isEmpty()) {
+        value = partialValue;
+      } else {
+        MapValue mergedResult = applyOverlay(partialValue, FieldPath.EMPTY_PATH, overlayMap);
+        if (mergedResult == null) {
+          value = partialValue;
+        } else {
+          value = Value.newBuilder().setMapValue(mergedResult).build();
         }
       }
+
+      assert (value != null);
+      mergedValue = value;
+      partialValue = null;
+      overlayMap.clear();
     }
 
     return value;
+  }
+
+  /** Inflates the serialized MapValue bytes into a Value, validating it lazily. */
+  private static Value inflate(ByteString serializedMapValue) {
+    try {
+      Value value = Value.newBuilder().setMapValue(MapValue.parseFrom(serializedMapValue)).build();
+      hardAssert(
+          !ServerTimestamps.isServerTimestamp(value),
+          "ServerTimestamps should not be used as an ObjectValue");
+      return value;
+    } catch (InvalidProtocolBufferException e) {
+      throw fail(e, "Failed to parse byte-backed ObjectValue");
+    }
   }
 
   /**
@@ -215,7 +333,14 @@ public final class ObjectValue implements Cloneable {
    */
   private void setOverlay(FieldPath path, @Nullable Value value) {
     synchronized (lock) {
-      if (mergedValue != null) {
+      if (serializedMapValue != null) {
+        // First mutation: leave the byte-backed regime. Inflate as the mutation base and drop the
+        // compact backing and the per-field cache.
+        partialValue = inflate(serializedMapValue);
+        serializedMapValue = null;
+        byteBackedFieldCache = null;
+        mergedValue = null;
+      } else if (mergedValue != null) {
         partialValue = mergedValue;
         mergedValue = null;
       }
@@ -322,6 +447,11 @@ public final class ObjectValue implements Cloneable {
 
   @NonNull
   public ObjectValue clone() {
+    ByteString bytes = serializedMapValue;
+    if (bytes != null) {
+      // Share the immutable backing bytes — no inflation. The clone gets its own soft cache.
+      return ObjectValue.fromMapValueBytes(bytes);
+    }
     return new ObjectValue(buildProto());
   }
 }

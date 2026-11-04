@@ -16,6 +16,7 @@ package com.google.firebase.firestore.model;
 
 import androidx.annotation.NonNull;
 import com.google.firestore.v1.Value;
+import java.util.List;
 
 /**
  * Represents a document in Firestore with a key, version, data and whether it has local mutations
@@ -238,6 +239,28 @@ public final class MutableDocument implements Document {
   @NonNull
   public MutableDocument mutableCopy() {
     return new MutableDocument(key, documentType, version, readTime, value.clone(), documentState);
+  }
+
+  /**
+   * Returns a copy of this document that retains only the given fields in its data, dropping all
+   * other field values. The key, version, read time, document type and mutation state are
+   * preserved.
+   *
+   * <p>Used by "changes-only" query views (see {@code com.google.firebase.firestore.core.View}) to
+   * avoid holding full document data for documents that are only needed to compute diffs and
+   * maintain sort order, and that are never surfaced through {@code QuerySnapshot.getDocuments()}.
+   * Retaining the query's sort fields keeps the view's document ordering correct.
+   */
+  @NonNull
+  public MutableDocument copyWithProjectedData(List<FieldPath> fieldsToRetain) {
+    ObjectValue projected = new ObjectValue();
+    for (FieldPath field : fieldsToRetain) {
+      Value fieldValue = value.get(field);
+      if (fieldValue != null) {
+        projected.set(field, fieldValue);
+      }
+    }
+    return new MutableDocument(key, documentType, version, readTime, projected, documentState);
   }
 
   @Override

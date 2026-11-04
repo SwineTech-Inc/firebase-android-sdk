@@ -155,6 +155,8 @@ dependencies {
     implementation libs.grpc.okhttp
     implementation libs.grpc.protobuf.lite
     implementation libs.grpc.stub
+    // SwineTech ENG-1396: Guava 33.7.2 fixes GHSA-xxph-c9ww-hj94; gRPC 1.84.0 asks for 33.6.0. Drop once gRPC catches up.
+    implementation 'com.google.guava:guava:33.7.2-android'
     implementation libs.kotlin.stdlib
     implementation libs.kotlinx.coroutines.core
     implementation 'com.google.re2j:re2j:1.6'
