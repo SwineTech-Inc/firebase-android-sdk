@@ -68,7 +68,8 @@ public final class ObjectValue implements Cloneable {
    * #lock}; dropped when the document leaves the byte-backed regime (mutation).
    */
   @GuardedBy("lock")
-  @Nullable private Map<FieldPath, Value> byteBackedFieldCache;
+  @Nullable
+  private Map<FieldPath, Value> byteBackedFieldCache;
 
   /** Test-only: counts how many times this document has been inflated from its byte backing. */
   @VisibleForTesting int byteBackedInflations;
