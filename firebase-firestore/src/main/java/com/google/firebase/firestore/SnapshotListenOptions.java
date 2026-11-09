@@ -171,6 +171,20 @@ public final class SnapshotListenOptions {
      * allowing the query view to retain projected documents instead of full data. Only set this for
      * listeners that never call {@code QuerySnapshot.getDocuments()}.
      *
+     * <p>Listeners on equal queries (same path, filters, order and limit, however they were built)
+     * share one view. While a changes-only listener is active:
+     *
+     * <ul>
+     *   <li>Do not add another listener to an equal query, or call {@code get()} or {@code
+     *       get(Source.SERVER)} on one: they can receive documents holding only the fields the
+     *       query orders by. {@code get(Source.CACHE)} is unaffected.
+     *   <li>Call {@code ListenerRegistration.remove()} before listening to an equal query again.
+     *   <li>Use only the ID of a {@code REMOVED} change's document. Its other fields can be
+     *       missing.
+     * </ul>
+     *
+     * <p>Queries with a limit keep full documents, so none of this applies to them.
+     *
      * @param changesOnly Whether the listener is changes-only.
      * @return This Builder instance to allow chaining of method calls.
      */
