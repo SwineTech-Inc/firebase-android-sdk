@@ -181,6 +181,7 @@ public final class SnapshotListenOptions {
      *   <li>Call {@code ListenerRegistration.remove()} before listening to an equal query again.
      *   <li>Use only the ID of a {@code REMOVED} change's document. Its other fields can be
      *       missing.
+     *   <li>Expect {@code MODIFIED} changes with unchanged data after local writes.
      * </ul>
      *
      * <p>Queries with a limit keep full documents, so none of this applies to them.
